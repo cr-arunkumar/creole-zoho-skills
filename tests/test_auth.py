@@ -70,3 +70,24 @@ def test_callback_server_receives_redirect_over_a_real_socket():
 
 def test_default_scopes_have_no_delete():
     assert not [s for s in auth.DEFAULT_SCOPES if s.endswith(".delete")]
+
+
+def test_scope_levels_and_services():
+    allsc = auth.KNOWN_SCOPES
+    assert list(auth.services(allsc)) == ["zohoprojects", "workdrive"]
+    read = auth.select(allsc, ["zohoprojects"], "read")
+    assert "ZohoMCP.tool.execute" in read and all(auth.split_scope(s)[2] == "read" or auth.is_core(s) for s in read)
+    std = auth.select(allsc, ["zohoprojects"], "standard")
+    assert "zohoprojects.tasks.update" in std and "zohoprojects.timesheets.create" in std
+    assert "zohoprojects.tasks.delete" not in std and "zohoprojects.projects.update" not in std
+    assert not [s for s in std if s.startswith("workdrive")]
+    full = auth.select(allsc, ["zohoprojects", "workdrive"], "full")
+    assert "zohoprojects.tasks.delete" in full and "workdrive.files.all" in full
+    assert auth.DEFAULT_SCOPES == std
+
+
+def test_fetch_supported_scopes_falls_back_offline(monkeypatch):
+    def boom(*a, **k):
+        raise httpx.ConnectError("offline")
+    monkeypatch.setattr(httpx, "get", boom)
+    assert auth.fetch_supported_scopes(URL) == auth.KNOWN_SCOPES

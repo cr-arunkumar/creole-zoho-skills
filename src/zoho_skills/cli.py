@@ -197,7 +197,8 @@ def verify_url(url: str, *, offer_login: bool = False) -> tuple:
         if offer_login and upstream.is_auth_error(e):
             print(f"{S.warn('!')} Zoho MCP: {msg}")
             if tui.confirm("Sign in to Zoho in your browser now?", default=True):
-                ok, msg2 = run_login(url, None, True)
+                scopes = pick_scopes(url) if tui.interactive() else None
+                ok, msg2 = run_login(url, scopes, True)
                 return ok, msg2
         return False, msg
 
@@ -505,6 +506,33 @@ def cmd_doctor(a: argparse.Namespace) -> int:
     return 1 if any(c.status == "fail" for c in checks) else 0
 
 
+def pick_scopes(url: str) -> object:
+    """Interactive access picker: which Zoho services, at what level. Returns a scope list or BACK/None on cancel."""
+    from . import auth
+    with tui.Spinner("Reading the permissions your Zoho MCP server offers") as sp:
+        offered = auth.fetch_supported_scopes(url)
+        svcs = auth.services(offered)
+        sp.ok(f"{len(offered)} permissions across {len(svcs)} service(s)")
+    rows = [(k, auth.service_label(k), f"{len(v)} permission(s): " + ", ".join(sorted({auth.split_scope(x)[1] for x in v}))[:90])
+            for k, v in svcs.items()]
+    chosen = tui.choose("Which Zoho services may zoho-skills use?", rows, multi=True,
+                        selected=[k for k in svcs if k == "zohoprojects"], can_back=False, step="1/2",
+                        summary=lambda ks: ", ".join(auth.service_label(k) for k in ks) or "none")
+    if not chosen:
+        return None
+    level = tui.choose("Access level", [(k, v[0], v[1]) for k, v in auth.LEVELS.items()], multi=False,
+                       default_index=1, can_back=False, step="2/2", summary=lambda k: auth.LEVELS[k][0])
+    scopes = auth.select(offered, chosen, "standard" if level == "custom" else level)
+    if level == "custom":
+        pool = [sc for sc in offered if auth.split_scope(sc)[0] in chosen and not auth.is_core(sc)]
+        picked = tui.choose("Permissions", [(sc, sc, "") for sc in pool], multi=True,
+                            selected=[sc for sc in scopes if sc in pool], can_back=False,
+                            summary=lambda ks: f"{len(ks)} selected")
+        scopes = [sc for sc in offered if auth.is_core(sc)] + list(picked)
+    print(f"  {S.dim('ZohoMCP.tool.execute is always requested — without it the server cannot run any tool.')}")
+    return scopes
+
+
 def cmd_login(a: argparse.Namespace) -> int:
     """Sign in to Zoho (OAuth, in the browser). Needed once; tokens refresh automatically afterwards."""
     from . import auth
@@ -514,6 +542,19 @@ def cmd_login(a: argparse.Namespace) -> int:
               "zoho-skills connect")
         return 1
     scopes = a.scopes.split(",") if a.scopes else None
+    if scopes is None and (a.level or a.services):
+        offered = auth.fetch_supported_scopes(url)
+        svcs = a.services.split(",") if a.services else ["zohoprojects"]
+        unknown = [x for x in svcs if x not in auth.services(offered)]
+        if unknown or (a.level or "standard") not in ("read", "standard", "full"):
+            print(f"{S.err('✖')} services: {', '.join(auth.services(offered))}; levels: read, standard, full", file=sys.stderr)
+            return 2
+        scopes = auth.select(offered, svcs, a.level or "standard")
+    elif scopes is None and tui.interactive() and not a.yes:
+        scopes = pick_scopes(url)
+        if not scopes:
+            print("cancelled — nothing requested.")
+            return 1
     ok, msg = run_login(url, scopes, not a.no_browser)
     print(f"  {S.ok('✔') if ok else S.err('✖')} {msg}")
     if ok:
@@ -658,6 +699,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--dry-run", action="store_true")
     li = sub.add_parser("login", help="sign in to Zoho (OAuth in your browser)")
     li.add_argument("--scopes", help="comma list of OAuth scopes (default: least-privilege set, no deletes)")
+    li.add_argument("--services", help="comma list of services to allow, e.g. zohoprojects,workdrive (default: zohoprojects)")
+    li.add_argument("--level", choices=["read", "standard", "full"],
+                    help="access level: read | standard (read + create/update work items) | full (incl. delete)")
+    li.add_argument("-y", "--yes", action="store_true", help="no prompts; use the default least-privilege set")
     li.add_argument("--no-browser", action="store_true", help="print the authorisation URL instead of opening it")
     lo = sub.add_parser("logout", help="forget the stored Zoho URL and sign-in")
     dc = sub.add_parser("disconnect", help="remove the MCP entry from harnesses (keeps skills)")

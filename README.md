@@ -51,7 +51,10 @@ preview and wait for your confirmation. Treat the gate as a guard rail, not an a
 ## Signing in to Zoho
 The MCP URL alone is not a credential: Zoho's endpoint answers `401` + an OAuth challenge. After `connect`, run
 `zoho-skills login` once; it opens your browser, you approve the listed permissions, and the proxy stores and refreshes
-the tokens. If Zoho tools are missing, `zs_status` / `zoho-skills doctor` say `sign-in required` and the fix.
+the tokens. You choose what zoho-skills may touch: the services your MCP server offers (the list comes from the server,
+so e.g. Mail appears only if you added it in the Zoho MCP console) and an access level — **read only**,
+**read + work items** (default: create/update tasks, time logs, bugs; no deletes) or **everything**. The Zoho MCP
+console's own tool selection still caps what can ever run. If Zoho tools are missing, `zs_status` / `zoho-skills doctor` say `sign-in required` and the fix.
 
 ## Where secrets live
 In `~/.zoho-skills/` (mode 0600): `config.json` (the Zoho MCP URL, which may embed a key) and `oauth.json` (OAuth tokens, bound to that URL). Harness configs contain
@@ -63,7 +66,7 @@ just the `zoho-skills mcp` launch command. Output masks the URL. Zoho auth/OAuth
 | `zoho-skills` / `onboard` | Guided wizard (default) |
 | `install` | Skills only, no MCP; non-interactive: `--yes --harness claude,cursor --global\|--project DIR [--dry-run]` |
 | `connect` | Only (re)set the Zoho MCP URL (stored in `~/.zoho-skills`); `--region in\|com\|eu\|com.au\|jp`, `--no-verify` |
-| `login` | Sign in to Zoho (OAuth in your browser; once). `--scopes a,b`, `--no-browser`. Least-privilege scopes by default (no deletes) |
+| `login` | Sign in to Zoho (OAuth, once). Interactive: pick services (Projects, WorkDrive, …) and an access level (read / read + work items / everything / custom). Flags: `--services zohoprojects,workdrive`, `--level read\|standard\|full`, `--scopes a,b`, `--no-browser`, `-y` |
 | `logout` | Forget the stored Zoho URL and sign-in tokens (harness entries and skills stay) |
 | `disconnect` | Remove the `zoho-skills` MCP entry from harnesses, keep skills; `--logout` also forgets the URL |
 | `mcp` | Run the stdio MCP server (what harnesses launch) |

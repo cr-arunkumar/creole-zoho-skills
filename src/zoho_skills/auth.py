@@ -20,15 +20,89 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAu
 
 from . import config
 
-# Least privilege: no delete scopes, no portal/project/milestone create/update. Override with `login --scopes`.
-DEFAULT_SCOPES = [
-    "zohoprojects.portals.read", "zohoprojects.projects.read", "zohoprojects.projectgroups.read",
-    "zohoprojects.tasklists.read", "zohoprojects.tasks.read", "zohoprojects.tasks.create",
-    "zohoprojects.tasks.update", "zohoprojects.timesheets.read", "zohoprojects.timesheets.create",
-    "zohoprojects.timesheets.update", "zohoprojects.users.read", "zohoprojects.milestones.read",
-    "zohoprojects.tags.read", "zohoprojects.custom_fields.read", "zohoprojects.bugs.read",
+# Scopes advertised by Zoho's MCP server for Projects + WorkDrive (fallback when the live list can't be fetched).
+KNOWN_SCOPES = [
+    "zohoprojects.portals.read", "zohoprojects.portals.create", "zohoprojects.portals.update", "zohoprojects.portals.delete",
+    "zohoprojects.projects.read", "zohoprojects.projects.create", "zohoprojects.projects.update", "zohoprojects.projects.delete",
+    "zohoprojects.projectgroups.read", "zohoprojects.projectgroups.create", "zohoprojects.projectgroups.update",
+    "zohoprojects.projectgroups.delete",
+    "zohoprojects.tasklists.read", "zohoprojects.tasklists.create", "zohoprojects.tasklists.update", "zohoprojects.tasklists.delete",
+    "zohoprojects.tasks.read", "zohoprojects.tasks.create", "zohoprojects.tasks.update", "zohoprojects.tasks.delete",
+    "zohoprojects.timesheets.read", "zohoprojects.timesheets.create", "zohoprojects.timesheets.update",
+    "zohoprojects.milestones.read", "zohoprojects.milestones.create", "zohoprojects.milestones.update",
+    "zohoprojects.milestones.delete",
+    "zohoprojects.bugs.read", "zohoprojects.bugs.create", "zohoprojects.bugs.update", "zohoprojects.bugs.delete",
+    "zohoprojects.tags.read", "zohoprojects.tags.create", "zohoprojects.tags.update", "zohoprojects.tags.delete",
+    "zohoprojects.custom_fields.read", "zohoprojects.custom_fields.create", "zohoprojects.custom_fields.update",
+    "zohoprojects.custom_fields.delete",
+    "zohoprojects.users.read", "zohoprojects.users.create",
+    "workdrive.workspace.all", "workdrive.files.all", "workdrive.team.all",
     "ZohoMCP.tool.execute",
 ]
+SERVICE_LABELS = {"zohoprojects": "Zoho Projects", "workdrive": "Zoho WorkDrive", "zohomail": "Zoho Mail",
+                  "zohocliq": "Zoho Cliq", "zohocrm": "Zoho CRM", "zohocalendar": "Zoho Calendar"}
+WORK_ITEMS = {"tasks", "timesheets", "bugs", "tasklists", "milestones", "tags"}  # what "standard" may create/update
+LEVELS = {
+    "read": ("Read only", "view data; never create, change or delete"),
+    "standard": ("Read + work items", "read everything; create/update tasks, time logs, bugs, task lists, milestones, tags; no deletes"),
+    "full": ("Everything", "all permissions the server offers, including delete (and WorkDrive, which has no read-only scope)"),
+    "custom": ("Custom", "pick individual permissions"),
+}
+
+
+def split_scope(scope: str) -> tuple:
+    """'zohoprojects.tasks.read' -> ('zohoprojects', 'tasks', 'read')."""
+    parts = scope.split(".")
+    return parts[0].lower(), ".".join(parts[1:-1]), parts[-1].lower() if len(parts) > 1 else ""
+
+
+def is_core(scope: str) -> bool:
+    return scope.startswith("ZohoMCP.")  # lets the MCP server run tools at all; always requested
+
+
+def services(scopes: list) -> dict:
+    """service key -> its scopes (core ZohoMCP scopes excluded)."""
+    out: dict = {}
+    for sc in scopes:
+        if not is_core(sc):
+            out.setdefault(split_scope(sc)[0], []).append(sc)
+    return out
+
+
+def service_label(key: str) -> str:
+    return SERVICE_LABELS.get(key, key.capitalize())
+
+
+def select(scopes: list, chosen_services: list, level: str) -> list:
+    """Scopes for the chosen services at an access level (+ the core scope the server always needs)."""
+    out = [sc for sc in scopes if is_core(sc)]
+    for sc in scopes:
+        svc, res, action = split_scope(sc)
+        if is_core(sc) or svc not in chosen_services:
+            continue
+        if level == "full" or (level == "read" and action == "read") or (
+                level == "standard" and (action == "read" or (action in ("create", "update") and res in WORK_ITEMS))):
+            out.append(sc)
+    return out
+
+
+DEFAULT_SCOPES = select(KNOWN_SCOPES, ["zohoprojects"], "standard")
+
+
+def fetch_supported_scopes(url: str, timeout: float = 10) -> list:
+    """Scopes the user's MCP server offers (public OAuth metadata); falls back to the known Zoho Projects list."""
+    import httpx
+    p = urlparse(url)
+    try:
+        r = httpx.get(f"{p.scheme}://{p.netloc}/.well-known/oauth-protected-resource", timeout=timeout)
+        found = [x for x in r.json().get("scopes_supported", []) if isinstance(x, str)]
+        if found:
+            return found
+    except (httpx.HTTPError, ValueError, AttributeError):
+        pass
+    return list(KNOWN_SCOPES)
+
+
 RELOGIN = "run `zoho-skills login`"
 
 
