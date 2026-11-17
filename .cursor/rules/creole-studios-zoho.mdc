@@ -164,4 +164,4 @@ subscribed AI tools (Cursor, Copilot, Claude Pro): expect tighter time expectati
 - [ ] Meetings logged under a meeting task (or explained)
 
 
-(Helper scripts for this skill live in the repo at skills/creole-studios-zoho/scripts/.)
+(Helper scripts for this skill ship with the installed skill folder (creole-studios-zoho/scripts/).)

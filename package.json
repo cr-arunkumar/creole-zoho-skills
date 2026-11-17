@@ -1,12 +1,17 @@
 {
-  "name": "creole-zoho",
+  "name": "zoho-skills",
   "version": "0.1.0",
-  "description": "Onboarding CLI for Zoho Projects automation skills (Claude Code, Cursor, Antigravity/Gemini, Codex) — installs skills and connects the Zoho MCP server.",
-  "bin": { "creole-zoho": "bin/creole-zoho.js" },
+  "description": "Zoho Projects automation for AI agents: org rule packs + a gated MCP proxy, with a guided multi-harness installer (Claude Code, Cursor, Antigravity/Gemini, Codex).",
+  "bin": {
+    "zoho-skills": "bin/zoho-skills.js",
+    "creole-zoho": "bin/zoho-skills.js"
+  },
   "files": [
     "bin/",
-    "scripts/*.py",
+    "pyproject.toml",
+    "src/zoho_skills/**/*.py",
     "skills/",
+    "packs/",
     "templates/",
     ".claude-plugin/plugin.json",
     "install.sh",
@@ -15,11 +20,28 @@
     "!**/__pycache__",
     "!**/*.pyc"
   ],
-  "engines": { "node": ">=16" },
-  "keywords": ["zoho", "zoho-projects", "mcp", "claude-code", "cursor", "agent-skills", "cli"],
-  "repository": { "type": "git", "url": "git+https://github.com/cr-arunkumar/creole-zoho-skills.git" },
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": [
+    "zoho",
+    "zoho-projects",
+    "mcp",
+    "claude-code",
+    "cursor",
+    "agent-skills",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cr-arunkumar/creole-zoho-skills.git"
+  },
   "homepage": "https://github.com/cr-arunkumar/creole-zoho-skills#readme",
-  "bugs": { "url": "https://github.com/cr-arunkumar/creole-zoho-skills/issues" },
+  "bugs": {
+    "url": "https://github.com/cr-arunkumar/creole-zoho-skills/issues"
+  },
   "license": "MIT",
-  "publishConfig": { "access": "public" }
+  "publishConfig": {
+    "access": "public"
+  }
 }

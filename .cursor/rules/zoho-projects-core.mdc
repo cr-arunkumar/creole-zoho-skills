@@ -109,4 +109,4 @@ skills/<org-slug>-zoho/
 - [ ] Linter (if any) has tests; `scripts/build-adapters.sh` run so Cursor/Antigravity copies are regenerated
 
 
-(Helper scripts for this skill live in the repo at skills/zoho-projects-core/scripts/.)
+(Helper scripts for this skill ship with the installed skill folder (zoho-projects-core/scripts/).)

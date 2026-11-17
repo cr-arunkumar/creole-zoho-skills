@@ -1,11 +1,13 @@
 {
   "name": "creole-zoho-skills",
-  "owner": { "name": "creole-zoho-skills" },
+  "owner": {
+    "name": "creole-zoho-skills"
+  },
   "plugins": [
     {
       "name": "creole-zoho-skills",
       "source": "./",
-      "description": "Zoho Projects automation skills (core + Creole Studios org rules)."
+      "description": "Zoho Projects automation skills: generic core plus the bundled Creole Studios org pack. Add your own org packs with the zoho-skills CLI."
     }
   ]
 }

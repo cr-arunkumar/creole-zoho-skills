@@ -67,8 +67,7 @@ def test_committed_adapters_are_current():
 
 
 def test_every_skill_has_valid_frontmatter():
-    sys.path.insert(0, str(REPO / "scripts"))
-    import adapters
+    from zoho_skills import adapters
     names = adapters.list_skills()
     assert {CORE, CREOLE} <= set(names)
     for n in names:

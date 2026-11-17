@@ -2,5 +2,8 @@
   "name": "creole-zoho-skills",
   "version": "0.1.0",
   "description": "Org-based Zoho Projects automation skills: a generic core plus per-organisation rule packs (Creole Studios included).",
-  "skills": "./skills/"
+  "skills": [
+    "./skills/",
+    "./packs/creole-studios/skills/"
+  ]
 }

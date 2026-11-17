@@ -1,0 +1,15 @@
+{
+  "slug": "creole-studios",
+  "display_name": "Creole Studios",
+  "version": "0.1.0",
+  "org_names": ["Creole Studios", "creolestudiosdotcom1"],
+  "skills": ["creole-studios-zoho"],
+  "lint": "skills/creole-studios-zoho/scripts/lint_task.py",
+  "final_status": "In QA Review",
+  "resources": [
+    "skills/creole-studios-zoho/SKILL.md",
+    "skills/creole-studios-zoho/references/conventions.md",
+    "skills/creole-studios-zoho/references/scoring-rubric.md",
+    "skills/creole-studios-zoho/references/examples.md"
+  ]
+}

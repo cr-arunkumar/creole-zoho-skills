@@ -1,81 +1,86 @@
-# creole-zoho-skills
+# zoho-skills
 
-Zoho Projects automation for AI coding agents, built from **skills** — one skill per organisation on top of a generic core.
-Point any supported harness at this repo (or install it) and the agent knows how to create tasks, write titles,
-descriptions and progress comments, log time and move work to review **in your org's format**.
+Zoho Projects automation for AI coding agents: **org rule packs** (title, description and comment standards, time
+logging, scoring) plus a **gated MCP proxy** in front of Zoho, installed into Claude Code, Cursor, Antigravity / Gemini
+CLI and Codex with one guided command. Creole Studios' rules are bundled (public) as the first pack.
 
-| Skill | Purpose |
-|-------|---------|
-| `zoho-projects-core` | Org-neutral workflow: resolve ids, "last create" defaults, dry-run before writes, read-only mode |
-| `creole-studios-zoho` | Creole Studios rules from the Zoho Task Evaluation guide: title/description/comment standards, time, **In QA Review**, scoring rubric + linter |
-| `templates/org-skill` | Starting point for another organisation (see `skills/zoho-projects-core/references/org-skill-spec.md`) |
-
-Org rules live **only** in the org skill; the core never contains them.
-
-## Install (one line)
+## Install
 ```bash
-npx creole-zoho@latest
+npx zoho-skills@latest
 # or, without Node:
 curl -fsSL https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/main/install.sh | sh
 ```
-Starts an interactive onboarding (needs Python 3.9+; `npx` additionally needs Node 16+):
+Both use [uv](https://docs.astral.sh/uv/) to manage Python (the installer offers to fetch it; the npm shim asks first).
+Pin a release for production: `ZOHO_SKILLS_REF=v0.2.0 sh install.sh`. The old `creole-zoho` command still works as an alias.
 
-1. **Skills** — pick which skills to install (`zoho-projects-core` is always included).
-2. **Harnesses** — Claude Code, Cursor, Antigravity / Gemini CLI, Codex / Copilot (AGENTS.md); detected ones are pre-ticked.
-3. **Scope** — global (`$HOME`) or a project folder.
-4. **Zoho MCP** — the CLI points you at the official Zoho MCP console for your data centre (default
-   [mcp.zoho.in](https://mcp.zoho.in/)), tells you which Zoho Projects tools to add, offers to open the page, then you
-   paste the URL from the console's **Connect** tab; it is registered with every chosen harness
-   (`claude mcp add`, `~/.cursor/mcp.json`, `~/.gemini/settings.json`, `~/.codex/config.toml`). Existing config is
-   preserved and backed up to `*.bak`. The URL may contain a key, so it is written only to your harness config and is
-   masked in output. Authenticate in the harness afterwards (Claude Code: `/mcp`).
-5. **Review → confirm → install.**
+## What the wizard does
+1. **Harnesses**: Claude Code, Cursor, Antigravity / Gemini, Codex (detected ones pre-ticked).
+2. **Scope**: global (`$HOME`) or one project folder.
+3. **Org packs**: which rule packs to enable (core skill is always included).
+4. **Region**: Zoho data centre, India (`mcp.zoho.in`) by default; then paste your MCP URL from the Zoho MCP console
+   (hidden input, never echoed).
+5. **ONE MCP entry per harness**, launching `zoho-skills mcp`. Existing harness config is merged and backed up.
+6. **Doctor**: verifies everything and reports what to fix.
 
-Controls: **↑/↓** move · **space** toggle · **a** select all · type to **filter** · **enter** confirm ·
-**esc** go back a step · **Ctrl-C** cancel (nothing is written until the final "Install now"). The MCP URL is read with
-hidden input so it never lands in your terminal scrollback.
-
-The installer leaves a `creole-zoho` command in `~/.local/bin`:
-```bash
-creole-zoho                 # onboarding again
-creole-zoho mcp             # guided: only (re)connect the Zoho Projects MCP (--region in|com|eu|com.au|jp)
-creole-zoho list            # skills and harnesses
-creole-zoho doctor          # harnesses found, skills installed, MCP registered
-creole-zoho update          # fetch the latest version
+## Architecture
 ```
-Non-interactive (CI, dotfiles):
-```bash
-npx creole-zoho@latest install --yes --harness claude --global --no-mcp
-creole-zoho install --yes --harness claude,cursor --project ~/code/app --mcp-url "$ZOHO_MCP_URL" [--skills a,b] [--no-mcp] [--dry-run]
-# or straight from curl:
-curl -fsSL https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/main/install.sh | sh -s -- install --yes --harness all --global --no-mcp
+ Claude Code ─┐
+ Cursor ──────┤  one entry each:      ┌──────────────────────────────┐        ┌──────────────┐
+ Gemini/AG ───┼─ `zoho-skills mcp` ──▶│ zoho-skills MCP (stdio)      │──HTTPS▶│ Zoho Projects │
+ Codex ───────┘                       │  zs_* tools: org rules, lint │        │ MCP server    │
+                                      │  write gate (preview→token)  │        └──────────────┘
+                                      └──────────────┬───────────────┘
+                                   ~/.zoho-skills/config.json (0600: MCP URL)
 ```
-Env: `CZ_REF` (branch/tag), `CZ_HOME`, `CZ_BIN`, `ZOHO_MCP_URL`. The older flag-only `scripts/install.py` still works.
-Or just open this repo in a harness: root `AGENTS.md` / `GEMINI.md` point at `skills/`, and generated copies are
-committed in `.claude/skills`, `.agent/skills`, `.cursor/rules`. MCP details: `skills/zoho-projects-core/references/mcp-setup.md`.
+Org rules, lint and Zoho tools all arrive through that single entry (`zs_*` tools plus the proxied Zoho tools).
 
-## Safety model
-- Reads first; ids are resolved at runtime, never hardcoded.
-- **Every create/update is previewed and needs explicit confirmation**; read-only mode never writes.
-- No secrets in the repo; auth goes through the harness's MCP/OAuth.
-- The Python helpers never call Zoho. If the connected MCP server has no comment/time-log tool, the agent hands you
-  ready-to-paste text instead of claiming it posted.
+## The write gate (what it does and does not do)
+Zoho tools that create or update data are not forwarded straight through. The agent first requests a preview; the
+server returns a **token bound to that exact call** (tool + arguments). The write only executes with that token:
+**single-use, expires after 5 minutes**, rejected if any argument changed. `ZOHO_SKILLS_READONLY=1` blocks all writes.
 
-## Creole Studios scoring helper
+Be clear about the limit: the gate **cannot prove a human read the preview**. A model can still obtain and use a
+token in one turn. The safety model is layered: the gate (no unreviewed, altered or replayed writes), your harness's
+own tool-approval prompt (keep it on for the write tools), and the skill instructions telling the model to show the
+preview and wait for your confirmation. Treat the gate as a guard rail, not an authorisation system.
+
+## Where secrets live
+Only in `~/.zoho-skills/config.json` (mode 0600): the Zoho MCP URL, which may embed a key. Harness configs contain
+just the `zoho-skills mcp` launch command. Output masks the URL. Zoho auth/OAuth is handled by Zoho; nothing in this repo.
+
+## Commands
+| Command | Purpose |
+|---------|---------|
+| `zoho-skills` / `onboard` | Guided wizard (default) |
+| `install` | Skills only, no MCP; non-interactive: `--yes --harness claude,cursor --global\|--project DIR [--dry-run]` |
+| `connect` | Only (re)set the Zoho MCP URL (stored in `~/.zoho-skills`); `--region in\|com\|eu\|com.au\|jp`, `--no-verify` |
+| `mcp` | Run the stdio MCP server (what harnesses launch) |
+| `org add\|list\|update\|remove` | Manage org packs |
+| `doctor` | Check harnesses, skills, MCP entry, config permissions |
+| `lint` | Offline task lint + estimated score from the org's rules |
+| `update` / `uninstall` | Upgrade the tool / remove entries and installed skills |
+
+Env: `ZOHO_SKILLS_REF`, `ZOHO_SKILLS_READONLY`, `ZOHO_SKILLS_URL` (overrides the stored URL), `ZOHO_SKILLS_HOME`.
+
+## Add an org pack
 ```bash
-echo '{"title":"Upgrade PHP on Site A [4.0 hrs]","description":"...","comment":"...","planned_minutes":240,"logged_minutes":240,"status":"In QA Review"}' \
-  | python3 skills/creole-studios-zoho/scripts/lint_task.py --json
+zoho-skills org add <dir | git-url | owner/repo>
 ```
-The estimated score is a heuristic derived from the guide's 10 reference examples — not the real evaluation engine.
-10.0 is the maximum on the scale.
+A pack is a folder with `pack.json` and `skills/<name>/SKILL.md` (see `packs/creole-studios/pack.json`):
+`slug`, `display_name`, `version`, `org_names` (matched against the portal's `org_name`), `skills`, `lint`
+(optional script), `final_status`, `resources` (files served by `zs_org_rules`). Start from `templates/org-skill/`
+and `skills/zoho-projects-core/references/org-skill-spec.md`.
+**Trust:** a pack's lint script runs locally with your permissions. Add packs only from sources you trust.
 
-## Optional: local API + SQLite
-`pip install -r api/requirements.txt && uvicorn api.app:app --port 8787` → `/lint`, `/drafts`, `/context/last`.
-State is a local SQLite file (`$ZOHO_SKILL_DB`, default `~/.creole-zoho-skills/state.db`).
-
-## Add your organisation
-Copy `templates/org-skill` to `skills/<org>-zoho/`, fill in the conventions, add tests, run
-`python3 scripts/build_adapters.py`, then `python3 -m pytest -q tests`.
+## Uninstall
+`zoho-skills uninstall [--purge]`, then `uv tool uninstall zoho-skills`. Delete `~/.zoho-skills` to remove config and state.
 
 ## Develop
-`skills/` is the source of truth. After editing: `python3 scripts/build_adapters.py` (CI runs `--check`).
+```bash
+uv venv && uv pip install -e . pytest fastapi httpx
+python3 -m pytest -q tests
+python3 scripts/build_adapters.py      # regenerate .claude/.agent/.cursor copies (CI runs --check)
+```
+`skills/` (core) and `packs/*/skills/` are the source of truth. The estimated lint score is a heuristic from the
+Creole guide's reference examples, not the real evaluation engine. Optional local API: `api/` (FastAPI + SQLite).
+Version lives in `package.json`, `pyproject.toml` and `.claude-plugin/plugin.json` (tests and the release guard keep them equal).

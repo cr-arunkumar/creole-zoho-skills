@@ -1,52 +1,49 @@
 #!/bin/sh
-# creole-zoho installer — fetches the repo and starts the onboarding CLI.
+# zoho-skills installer: installs uv (if missing) and the zoho-skills CLI, then starts onboarding.
 #   curl -fsSL https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/main/install.sh | sh
 #   curl -fsSL .../install.sh | sh -s -- install --yes --harness claude --global --mcp-url https://...
-# Env: CZ_REF (branch/tag, default main) · CZ_HOME (default ~/.creole-zoho-skills) · CZ_BIN (default ~/.local/bin)
-#      CZ_NO_RUN=1 (download/update only, don't start the CLI)
+# Env: ZOHO_SKILLS_REF     git ref to install (default main; pin a release tag, e.g. v0.2.0, for production)
+#      ZOHO_SKILLS_NO_RUN  set to 1 to install only, without starting the CLI
 set -eu
 
 REPO="cr-arunkumar/creole-zoho-skills"
-REF="${CZ_REF:-main}"
-HOME_DIR="${CZ_HOME:-$HOME/.creole-zoho-skills}"
-BIN_DIR="${CZ_BIN:-$HOME/.local/bin}"
-SRC="$HOME_DIR/src"
+REF="${ZOHO_SKILLS_REF:-main}"
 
 say() { printf '  %s\n' "$*"; }
 die() { printf '  error: %s\n' "$*" >&2; exit 1; }
 
-command -v curl >/dev/null 2>&1 || die "curl is required"
-command -v tar  >/dev/null 2>&1 || die "tar is required"
-command -v python3 >/dev/null 2>&1 || die "python3 (>= 3.9) is required"
-python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' || die "python3 >= 3.9 is required"
+if ! command -v uv >/dev/null 2>&1; then
+  for d in "$HOME/.local/bin" "$HOME/.cargo/bin"; do
+    [ -x "$d/uv" ] && PATH="$d:$PATH" && break
+  done
+fi
 
-printf '\n  ◆ creole-zoho · installing (%s@%s)\n' "$REPO" "$REF"
+if ! command -v uv >/dev/null 2>&1; then
+  command -v curl >/dev/null 2>&1 || die "curl is required to install uv"
+  say "uv (https://docs.astral.sh/uv/) is required and was not found."
+  say "installing it with the official installer: curl -LsSf https://astral.sh/uv/install.sh | sh"
+  curl -LsSf https://astral.sh/uv/install.sh | sh || die "uv installation failed"
+  for d in "$HOME/.local/bin" "$HOME/.cargo/bin"; do
+    [ -x "$d/uv" ] && PATH="$d:$PATH" && break
+  done
+  command -v uv >/dev/null 2>&1 || die "uv installed but not found on PATH; open a new shell and re-run"
+fi
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT INT TERM
-curl -fsSL "https://github.com/$REPO/archive/$REF.tar.gz" -o "$TMP/src.tar.gz" || die "download failed (check network / CZ_REF)"
-mkdir -p "$TMP/x" && tar -xzf "$TMP/src.tar.gz" -C "$TMP/x" || die "could not unpack archive"
-EXTRACTED="$(find "$TMP/x" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-[ -f "$EXTRACTED/scripts/cli.py" ] || die "archive does not look like $REPO"
+printf '\n  zoho-skills: installing (%s@%s)\n' "$REPO" "$REF"
+uv tool install --force "git+https://github.com/$REPO@$REF" || die "install failed (check network / ZOHO_SKILLS_REF)"
 
-mkdir -p "$HOME_DIR"
-rm -rf "$SRC.new" && mv "$EXTRACTED" "$SRC.new"
-rm -rf "$SRC" && mv "$SRC.new" "$SRC"
+BIN_DIR="$(uv tool dir --bin 2>/dev/null || true)"
+[ -n "$BIN_DIR" ] && PATH="$BIN_DIR:$PATH"
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
+command -v zoho-skills >/dev/null 2>&1 || die "zoho-skills not found on PATH after install; run 'uv tool update-shell' and open a new shell"
+say "installed: $(command -v zoho-skills)"
 
-mkdir -p "$BIN_DIR"
-cat > "$BIN_DIR/creole-zoho" <<EOF
-#!/bin/sh
-exec python3 "$SRC/scripts/cli.py" "\$@"
-EOF
-chmod +x "$BIN_DIR/creole-zoho"
-say "installed to $SRC"
-say "launcher:   $BIN_DIR/creole-zoho"
-case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "add to PATH:  export PATH=\"$BIN_DIR:\$PATH\"" ;; esac
+[ "${ZOHO_SKILLS_NO_RUN:-0}" = "1" ] && exit 0
 
-[ "${CZ_NO_RUN:-0}" = "1" ] && exit 0
+[ "$#" -gt 0 ] || set -- onboard
 
 # Under `curl | sh` stdin is the script, so give the CLI the real terminal when there is one.
 if [ -t 1 ] && [ -r /dev/tty ] && [ ! -t 0 ]; then
-  exec "$BIN_DIR/creole-zoho" "$@" < /dev/tty
+  exec zoho-skills "$@" < /dev/tty
 fi
-exec "$BIN_DIR/creole-zoho" "$@"
+exec zoho-skills "$@"

@@ -4,7 +4,7 @@ import sqlite3
 import sys
 
 SKILLS = pathlib.Path(__file__).resolve().parents[1] / "skills"
-DIRS = {"lint_task": SKILLS / "creole-studios-zoho" / "scripts", "store": SKILLS / "zoho-projects-core" / "scripts"}
+DIRS = {"lint_task": pathlib.Path(__file__).resolve().parents[1] / "packs/creole-studios/skills/creole-studios-zoho/scripts", "store": SKILLS / "zoho-projects-core" / "scripts"}
 
 
 def load(name):

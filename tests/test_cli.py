@@ -1,86 +1,104 @@
 import json
 import os
 import pathlib
+import re
+import stat
 import subprocess
 import sys
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-CLI = REPO / "scripts" / "cli.py"
 CORE, CREOLE = "zoho-projects-core", "creole-studios-zoho"
 URL = "https://example.invalid/mcp/message?key=SECRET"
 
 
-def run(*args, home):
-    env = dict(os.environ, HOME=str(home), PATH="/usr/bin:/bin")  # no real `claude` on PATH
-    return subprocess.run([sys.executable, str(CLI), *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+def run(*args, home, stdin=None):
+    env = dict(os.environ, HOME=str(home), ZOHO_SKILLS_HOME=str(home / ".zoho-skills"),
+               PATH="/usr/bin:/bin", PYTHONPATH=str(REPO / "src"))  # no real `claude` on PATH
+    env.pop("ZOHO_SKILLS_URL", None)
+    return subprocess.run([sys.executable, "-m", "zoho_skills", *args], capture_output=True, text=True, env=env,
+                          input=stdin, stdin=None if stdin else subprocess.DEVNULL)
 
 
-def test_yes_install_with_mcp_for_non_claude_harnesses(tmp_path):
-    r = run("--yes", "--harness", "antigravity,codex", "--global", "--mcp-url", URL, home=tmp_path)
+def test_install_is_skills_only(tmp_path):
+    r = run("install", "--yes", "--harness", "antigravity,codex", "--global", home=tmp_path)
     assert r.returncode == 0, r.stdout + r.stderr
     assert (tmp_path / ".gemini/antigravity/skills" / CORE / "SKILL.md").is_file()
-    gem = json.loads((tmp_path / ".gemini/settings.json").read_text())
-    assert gem["mcpServers"]["zoho-projects"]["httpUrl"] == URL
-    assert URL in (tmp_path / ".codex/config.toml").read_text()
-    assert "SECRET" not in r.stdout  # URL is masked in output
-
-
-def test_project_cursor_install_writes_rules_and_mcp(tmp_path):
-    proj = tmp_path / "app"
-    proj.mkdir()
-    r = run("--yes", "--harness", "cursor", "--project", str(proj), "--mcp-url", URL, home=tmp_path)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert (proj / ".cursor/rules" / f"{CREOLE}.mdc").is_file()
-    assert json.loads((proj / ".cursor/mcp.json").read_text())["mcpServers"]["zoho-projects"]["url"] == URL
+    assert (tmp_path / ".gemini/antigravity/skills" / CREOLE / "SKILL.md").is_file()
+    assert not (tmp_path / ".gemini/settings.json").exists() and not (tmp_path / ".codex/config.toml").exists()
 
 
 def test_org_skill_alone_pulls_in_core(tmp_path):
-    r = run("--yes", "--harness", "antigravity", "--global", "--skills", CREOLE, "--no-mcp", home=tmp_path)
+    r = run("install", "--yes", "--harness", "antigravity", "--global", "--skills", CREOLE, home=tmp_path)
     assert r.returncode == 0
     assert (tmp_path / ".gemini/antigravity/skills" / CORE / "SKILL.md").is_file()
 
 
-def test_no_mcp_flag_and_missing_url_skip_mcp(tmp_path):
-    r = run("--yes", "--harness", "antigravity", "--global", home=tmp_path)
-    assert r.returncode == 0 and not (tmp_path / ".gemini/settings.json").exists()
-    assert "creole-zoho mcp" in r.stdout  # tells the user how to connect later
+def test_onboard_writes_one_entry_per_harness_and_keeps_url_in_private_config(tmp_path):
+    r = run("onboard", "--yes", "--harness", "antigravity,codex", "--global", "--mcp-url", URL, "--no-verify",
+            home=tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    cfg = tmp_path / ".zoho-skills" / "config.json"
+    assert json.loads(cfg.read_text())["url"] == URL
+    assert stat.S_IMODE(cfg.stat().st_mode) == 0o600
+    assert "SECRET" not in r.stdout + r.stderr
+    for f in sorted(tmp_path.rglob("*")):
+        if f.is_file() and f != cfg:
+            assert "SECRET" not in f.read_text(errors="ignore"), f  # URL lives only in the private config
+    assert "zoho-skills" in (tmp_path / ".codex/config.toml").read_text()
+    assert (tmp_path / ".gemini/antigravity/skills" / CORE / "SKILL.md").is_file()
 
 
-def test_dry_run_writes_nothing(tmp_path):
-    r = run("--yes", "--harness", "all", "--global", "--mcp-url", URL, "--dry-run", home=tmp_path)
-    assert r.returncode == 0 and not any(tmp_path.iterdir())
+def test_onboard_no_mcp_writes_no_entries_or_config(tmp_path):
+    r = run("onboard", "--yes", "--harness", "antigravity", "--global", "--no-mcp", home=tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not (tmp_path / ".gemini/settings.json").exists() and not (tmp_path / ".zoho-skills").exists()
+
+
+def test_onboard_dry_run_writes_nothing(tmp_path):
+    r = run("onboard", "--yes", "--harness", "all", "--global", "--mcp-url", URL, "--no-verify", "--dry-run",
+            home=tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not any(tmp_path.iterdir())
 
 
 def test_bad_inputs_rejected(tmp_path):
-    assert run("--yes", "--harness", "nope", "--global", home=tmp_path).returncode != 0
-    assert run("--yes", "--skills", "nope", "--global", home=tmp_path).returncode != 0
-    assert run("--yes", "--harness", "codex", "--global", "--mcp-url", "http://evil.example/x", home=tmp_path).returncode != 0
+    assert run("onboard", "--yes", "--harness", "nope", "--global", home=tmp_path).returncode != 0
+    assert run("install", "--yes", "--skills", "nope", "--global", home=tmp_path).returncode != 0
+    assert run("onboard", "--yes", "--harness", "codex", "--global", "--mcp-url", "http://evil.example/x",
+               "--no-verify", home=tmp_path).returncode != 0
 
 
-def test_list_and_doctor(tmp_path):
+def test_connect_saves_url_privately(tmp_path):
+    r = run("connect", "--yes", "--mcp-url", URL, "--no-verify", home=tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads((tmp_path / ".zoho-skills/config.json").read_text())["url"] == URL
+    assert "SECRET" not in r.stdout
+
+
+def test_connect_without_url_points_to_india_console(tmp_path):
+    r = run("connect", "--yes", home=tmp_path)
+    assert r.returncode == 1 and "https://mcp.zoho.in/" in r.stdout
+
+
+def test_lint_uses_org_pack(tmp_path):
+    task = json.dumps({"title": "", "description": "x", "comment": "", "status": "In Progress"})
+    r = run("lint", "--org", "Creole Studios", "--json", home=tmp_path, stdin=task)
+    assert r.returncode == 1 and json.loads(r.stdout)["errors"]
+    assert run("lint", "--org", "Nope", home=tmp_path, stdin=task).returncode == 2
+
+
+def test_list_and_version(tmp_path):
     assert CREOLE in run("list", home=tmp_path).stdout
-    assert run("doctor", home=tmp_path).returncode == 0
+    assert re.search(r"zoho-skills \d+\.\d+\.\d+", run("--version", home=tmp_path).stdout)
 
 
 def test_install_sh_is_valid_posix_sh():
     assert subprocess.run(["sh", "-n", str(REPO / "install.sh")]).returncode == 0
 
 
-def test_mcp_subcommand_registers_without_touching_skills(tmp_path):
-    r = run("mcp", "--yes", "--harness", "antigravity", "--mcp-url", URL, home=tmp_path)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert (tmp_path / ".gemini/settings.json").is_file()
-    assert not (tmp_path / ".gemini/antigravity").exists()
-
-
-def test_mcp_subcommand_without_url_points_to_console(tmp_path):
-    r = run("mcp", "--yes", "--harness", "codex", "--region", "in", home=tmp_path)
-    assert r.returncode == 1 and "https://mcp.zoho.in/" in r.stdout
-
-
-def test_npm_package_version_matches_plugin_and_bin_exists():
-    import json
+def test_versions_stay_in_sync_and_npm_bin_exists():
     pkg = json.loads((REPO / "package.json").read_text())
     plugin = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text())
-    assert pkg["version"] == plugin["version"]
-    assert (REPO / pkg["bin"]["creole-zoho"]).is_file()
+    pyproject = re.search(r'^version = "([^"]+)"', (REPO / "pyproject.toml").read_text(), re.M).group(1)
+    assert pkg["version"] == plugin["version"] == pyproject
+    assert (REPO / pkg["bin"]["zoho-skills"]).is_file()

@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 _SKILLS = pathlib.Path(__file__).resolve().parents[1] / "skills"
-_DIRS = {"lint_task": _SKILLS / "creole-studios-zoho" / "scripts", "store": _SKILLS / "zoho-projects-core" / "scripts"}
+_DIRS = {"lint_task": _SKILLS.parent / "packs/creole-studios/skills/creole-studios-zoho/scripts", "store": _SKILLS / "zoho-projects-core" / "scripts"}
 
 
 def _load(name: str):

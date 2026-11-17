@@ -1,13 +1,13 @@
-# Publishes the `creole-zoho` npm package.
+# Publishes the `zoho-skills` npm package (the name comes from package.json).
 #
 # How to cut a release:
-#   1. Bump "version" in package.json AND .claude-plugin/plugin.json
-#      (a test enforces that they match).
+#   1. Bump "version" in package.json, pyproject.toml AND .claude-plugin/plugin.json
+#      (tests and the tag guard below enforce that they match).
 #   2. Commit the change.
 #   3. git tag vX.Y.Z && git push --tags
 #      (or publish a GitHub release for that tag).
 #
-# The tag (without the leading "v") must equal package.json "version".
+# The tag (without the leading "v") must equal package.json and pyproject.toml "version".
 # If that version is already on npm, the publish step is skipped, so reruns are safe.
 # Requires the NPM_TOKEN repository secret.
 name: publish
@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
 
@@ -38,23 +38,28 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
-      - run: pip install pytest fastapi uvicorn httpx
-      - run: python scripts/build_adapters.py --check
+      - name: Install package and test dependencies
+        run: |
+          uv venv
+          uv pip install -e . pytest fastapi httpx
+      - run: uv run --no-sync python scripts/build_adapters.py --check
       - run: sh -n install.sh
-      - run: python -m pytest -q tests
+      - run: shellcheck install.sh
+      - run: uv run --no-sync python -m pytest -q tests
 
-      - name: Guard - tag must match package.json version
+      - name: Guard - tag must match package.json and pyproject.toml version
         if: github.event_name != 'workflow_dispatch'
         env:
           TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
         run: |
           pkg_version="$(node -p "require('./package.json').version")"
+          py_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)"
           tag_version="${TAG#v}"
-          if [ "$tag_version" != "$pkg_version" ]; then
-            echo "::error::Tag '$TAG' (version $tag_version) does not match package.json version $pkg_version"
+          if [ "$tag_version" != "$pkg_version" ] || [ "$tag_version" != "$py_version" ]; then
+            echo "::error::Tag '$TAG' ($tag_version) must match package.json ($pkg_version) and pyproject.toml ($py_version)"
             exit 1
           fi
-          echo "Tag $TAG matches package.json version $pkg_version"
+          echo "Tag $TAG matches package.json and pyproject.toml version $pkg_version"
 
       - name: Check whether this version is already on npm
         id: npm_check
