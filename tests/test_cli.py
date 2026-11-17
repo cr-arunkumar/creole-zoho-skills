@@ -43,7 +43,7 @@ def test_org_skill_alone_pulls_in_core(tmp_path):
 def test_no_mcp_flag_and_missing_url_skip_mcp(tmp_path):
     r = run("--yes", "--harness", "antigravity", "--global", home=tmp_path)
     assert r.returncode == 0 and not (tmp_path / ".gemini/settings.json").exists()
-    assert "creole-zoho install" in r.stdout  # tells the user how to connect later
+    assert "creole-zoho mcp" in r.stdout  # tells the user how to connect later
 
 
 def test_dry_run_writes_nothing(tmp_path):

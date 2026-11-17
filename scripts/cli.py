@@ -1,174 +1,66 @@
 #!/usr/bin/env python3
 """creole-zoho — onboarding CLI for the Zoho Projects skills. Standard library only (Python 3.9+).
 
-  creole-zoho                       interactive onboarding (skills → harnesses → scope → MCP → install)
+  creole-zoho                       interactive onboarding (skills → harnesses → scope → MCP → review → install)
+  creole-zoho mcp                   guided: only (re)connect the Zoho Projects MCP server
   creole-zoho install --yes --harness claude,cursor --global --mcp-url https://...
   creole-zoho list | doctor | update
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
 import webbrowser
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import adapters  # noqa: E402
 import mcp_config  # noqa: E402
+import tui  # noqa: E402
+from tui import BACK, S  # noqa: E402
 
 CORE = "zoho-projects-core"
 HARNESS_INFO = {  # harness -> (label, executable to detect, config dir under $HOME)
-    "claude": ("Claude Code / Claude Desktop", "claude", ".claude"),
+    "claude": ("Claude Code / Desktop", "claude", ".claude"),
     "cursor": ("Cursor", "cursor", ".cursor"),
     "antigravity": ("Antigravity / Gemini CLI", "gemini", ".gemini"),
-    "codex": ("Codex / Copilot / AGENTS.md tools", "codex", ".codex"),
+    "codex": ("Codex / Copilot (AGENTS.md)", "codex", ".codex"),
 }
 COMMANDS = ("install", "mcp", "list", "doctor", "update")
+PROMPTED, SKIPPED = "prompted", "skipped"
 
 
-# ───────────────────────────── terminal styling ─────────────────────────────
-class Style:
-    def __init__(self) -> None:
-        self.on = sys.stdout.isatty() and "NO_COLOR" not in os.environ and os.environ.get("TERM") != "dumb"
-
-    def _c(self, code: str, s: str) -> str:
-        return f"\033[{code}m{s}\033[0m" if self.on else s
-
-    def bold(self, s): return self._c("1", s)
-    def dim(self, s): return self._c("2", s)
-    def accent(self, s): return self._c("38;5;80", s)
-    def ok(self, s): return self._c("32", s)
-    def warn(self, s): return self._c("33", s)
-    def err(self, s): return self._c("31", s)
-
-
-S = Style()
-
-
-def banner() -> None:
-    print()
-    print(f"  {S.accent('◆')} {S.bold('creole-zoho')} {S.dim('· Zoho Projects skills for AI agents')}")
-    print(f"  {S.dim('skills · harnesses · MCP — one onboarding')}\n")
-
-
-def step(n: int, total: int, title: str) -> None:
-    print(f"{S.accent(f'[{n}/{total}]')} {S.bold(title)}")
-
-
-def interactive() -> bool:
-    return sys.stdin.isatty() and sys.stdout.isatty()
-
-
-# ───────────────────────────── key handling / menus ─────────────────────────
-def _read_key() -> str:
-    import termios
-    import tty
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
+def version() -> str:
     try:
-        tty.setcbreak(fd)
-        ch = sys.stdin.read(1)
-        if ch == "\x1b":
-            nxt = sys.stdin.read(2)
-            return {"[A": "up", "[B": "down"}.get(nxt, "other")
-        if ch in ("\r", "\n"):
-            return "enter"
-        if ch == " ":
-            return "space"
-        if ch == "\x03":
-            return "ctrl-c"
-        return {"k": "up", "j": "down", "a": "all", "q": "ctrl-c"}.get(ch, "other")
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        return json.loads((adapters.REPO / ".claude-plugin" / "plugin.json").read_text())["version"]
+    except (OSError, ValueError, KeyError):
+        return "dev"
 
 
-def _menu(items: list, *, multi: bool, selected: set, locked: frozenset = frozenset(),
-          default_index: int = 0) -> list:
-    """items: [(key, label, hint)]. Returns the chosen keys (multi) or a one-element list (single)."""
-    cur = default_index
-    sel = set(selected) | set(locked)
-    hint = "↑/↓ move · space toggle · a all · enter confirm" if multi else "↑/↓ move · enter select"
-    lines_drawn = 0
-    sys.stdout.write("\033[?25l")  # hide cursor
-    try:
-        while True:
-            if lines_drawn:
-                sys.stdout.write(f"\033[{lines_drawn}F\033[J")
-            out = [f"  {S.dim(hint)}"]
-            for i, (key, label, sub) in enumerate(items):
-                pointer = S.accent("❯") if i == cur else " "
-                if multi:
-                    box = S.ok("◉") if key in sel else "○"
-                    lock = S.dim(" (required)") if key in locked else ""
-                else:
-                    box = S.ok("●") if i == cur else "○"
-                    lock = ""
-                name = S.bold(label) if i == cur else label
-                out.append(f"  {pointer} {box} {name}{lock}")
-                if sub:
-                    out.append(f"      {S.dim(sub)}")
-            sys.stdout.write("\n".join(out) + "\n")
-            sys.stdout.flush()
-            lines_drawn = len(out)
-            k = _read_key()
-            if k == "ctrl-c":
-                raise KeyboardInterrupt
-            if k == "up":
-                cur = (cur - 1) % len(items)
-            elif k == "down":
-                cur = (cur + 1) % len(items)
-            elif k == "space" and multi:
-                key = items[cur][0]
-                if key not in locked:
-                    sel ^= {key}
-            elif k == "all" and multi:
-                free = {i[0] for i in items}
-                sel = free if sel != free else set(locked)
-            elif k == "enter":
-                if multi and not sel:
-                    continue
-                return [i[0] for i in items if i[0] in sel] if multi else [items[cur][0]]
-    finally:
-        sys.stdout.write("\033[?25h")
-        sys.stdout.flush()
-
-
-def ask(prompt: str, default: str = "") -> str:
-    suffix = f" {S.dim('[' + default + ']')}" if default else ""
-    try:
-        return input(f"  {prompt}{suffix}: ").strip() or default
-    except EOFError:
-        return default
-
-
-def confirm(prompt: str, default: bool = True) -> bool:
-    ans = ask(f"{prompt} ({'Y/n' if default else 'y/N'})", "").lower()
-    return default if not ans else ans.startswith("y")
-
-
-# ───────────────────────────── detection ─────────────────────────────
+# ───────────────────────────── helpers ─────────────────────────────
 def detect_harnesses(home: Path) -> list:
-    found = []
-    for h, (_, exe, cfg) in HARNESS_INFO.items():
-        if shutil.which(exe) or (home / cfg).is_dir():
-            found.append(h)
-    return found
+    return [h for h, (_, exe, cfg) in HARNESS_INFO.items() if shutil.which(exe) or (home / cfg).is_dir()]
 
 
 def skill_rows() -> list:
     rows = []
     for n in adapters.list_skills():
         meta, _ = adapters.parse_skill(n)
-        desc = meta["description"]
-        rows.append((n, n, desc if len(desc) <= 92 else desc[:89].rstrip() + "…"))
+        rows.append((n, n, meta["description"]))
     return rows
 
 
-# ───────────────────────────── install flow ─────────────────────────────
+def harness_rows(detected: list) -> list:
+    return [(h, HARNESS_INFO[h][0], "detected on this machine" if h in detected else "not detected — install anyway")
+            for h in adapters.HARNESSES]
+
+
 def _split(value: str, valid: list, what: str) -> list:
     items = valid if value == "all" else [v.strip() for v in value.split(",") if v.strip()]
     bad = [i for i in items if i not in valid]
@@ -177,174 +69,260 @@ def _split(value: str, valid: list, what: str) -> list:
     return items
 
 
-def cmd_install(a: argparse.Namespace) -> int:
-    home = Path.home()
-    tty = interactive() and not a.yes
-    total = 5
-    if tty:
-        banner()
+@dataclass
+class State:
+    args: argparse.Namespace
+    home: Path
+    tty: bool
+    can_back: bool = False
+    names: list = field(default_factory=list)
+    harnesses: list = field(default_factory=list)
+    project: Optional[Path] = None
+    global_scope: bool = True
+    mcp_url: Optional[str] = None
 
-    # 1 — skills
+    @property
+    def base(self) -> Path:
+        return self.home if self.global_scope else self.project
+
+
+# ───────────────────────────── wizard steps ─────────────────────────────
+# Each step returns PROMPTED (asked the user), SKIPPED (answer came from flags/defaults) or BACK (esc).
+def step_skills(st: State) -> object:
     available = adapters.list_skills()
-    if a.skills:
-        names = _split(a.skills, available, "skill")
-    elif tty:
-        step(1, total, "Choose skills")
-        names = _menu(skill_rows(), multi=True, selected=set(available),
-                      locked=frozenset([CORE]) if CORE in available else frozenset())
-        print()
+    locked = [CORE] if CORE in available else []
+    if st.args.skills:
+        st.names = _split(st.args.skills, available, "skill")
+        res = SKIPPED
+    elif st.tty:
+        pick = tui.choose("Choose skills", skill_rows(), multi=True, selected=available, locked=locked,
+                          can_back=st.can_back, step="1/5", summary=lambda r: ", ".join(r))
+        if pick is BACK:
+            return BACK
+        st.names, res = pick, PROMPTED
     else:
-        names = list(available)
-    if CORE in available and CORE not in names:
-        names = [CORE] + names  # org skills require the core skill
+        st.names, res = list(available), SKIPPED
+    if CORE in available and CORE not in st.names:
+        st.names = [CORE] + st.names  # org skills require the core skill
+    return res
 
-    # 2 — harnesses
-    detected = detect_harnesses(home)
-    if a.harness:
-        harnesses = _split(a.harness, adapters.HARNESSES, "harness")
-    elif tty:
-        step(2, total, "Choose harnesses")
-        rows = [(h, HARNESS_INFO[h][0], "detected on this machine" if h in detected else "") for h in adapters.HARNESSES]
-        harnesses = _menu(rows, multi=True, selected=set(detected) or set(adapters.HARNESSES))
-        print()
+
+def step_harnesses(st: State, step: str = "2/5") -> object:
+    detected = detect_harnesses(st.home)
+    if st.args.harness:
+        st.harnesses = _split(st.args.harness, adapters.HARNESSES, "harness")
+        return SKIPPED
+    if st.tty:
+        pick = tui.choose("Choose harnesses", harness_rows(detected), multi=True,
+                          selected=detected or adapters.HARNESSES, can_back=st.can_back, step=step,
+                          summary=lambda r: ", ".join(HARNESS_INFO[h][0] for h in r))
+        if pick is BACK:
+            return BACK
+        st.harnesses = pick
+        return PROMPTED
+    st.harnesses = detected or list(adapters.HARNESSES)
+    return SKIPPED
+
+
+def step_scope(st: State) -> object:
+    a = st.args
+    if a.project:
+        st.project, st.global_scope = Path(a.project).expanduser().resolve(), False
+        return SKIPPED
+    if a.global_scope or not st.tty:
+        st.global_scope = True
+        return SKIPPED
+    pick = tui.choose("Where should skills live?", [
+        ("global", "Global", f"under {st.home} — available in every project"),
+        ("project", "A project", "a folder you choose (committable, shared with your team)")],
+        multi=False, can_back=st.can_back, step="3/5",
+        summary=lambda r: "global" if r == "global" else "project")
+    if pick is BACK:
+        return BACK
+    if pick == "project":
+        d = tui.text("Project directory", default=os.getcwd(), hint="'<' to go back", step="3/5",
+                     summary=lambda v: v)
+        if d is BACK:
+            return BACK
+        st.project, st.global_scope = Path(d).expanduser().resolve(), False
     else:
-        harnesses = detected or list(adapters.HARNESSES)
+        st.global_scope = True
+    return PROMPTED
 
-    # 3 — scope
-    project: Optional[Path] = Path(a.project).expanduser().resolve() if a.project else None
-    global_scope = bool(a.global_scope) or (project is None and not tty)
-    if project is None and not a.global_scope and tty:
-        step(3, total, "Where should the skills live?")
-        choice = _menu([("global", "Global", f"under {home} — available in every project"),
-                                 ("project", "This project", "a folder you choose")],
-                       multi=False, selected=set())[0]
-        print()
-        if choice == "project":
-            project = Path(ask("Project directory", os.getcwd())).expanduser().resolve()
-        else:
-            global_scope = True
-    base = home if global_scope else project
 
-    # 4 — MCP
-    mcp_url = None
-    if not a.no_mcp:
-        mcp_url = a.mcp_url or os.environ.get("ZOHO_MCP_URL")
-        if not mcp_url and tty:
-            step(4, total, "Connect the Zoho Projects MCP server")
-            mcp_url = guided_mcp_url(a.region)
-            print()
-        if mcp_url:
-            try:
-                mcp_url = mcp_config.validate_url(mcp_url)
-            except mcp_config.McpError as e:
-                raise SystemExit(f"error: {e}")
+def guided_mcp_url(st: State, step: str) -> object:
+    """Official-console walkthrough. Returns a URL, '' to skip, or BACK."""
+    region = st.args.region
+    if not region:
+        keys = list(mcp_config.REGIONS)
+        rows = [(r, mcp_config.REGIONS[r].replace("https://", "").rstrip("/"),
+                 "India data centre (default)" if r == mcp_config.DEFAULT_REGION else "") for r in keys]
+        region = tui.choose("Zoho data centre", rows, multi=False, default_index=keys.index(mcp_config.DEFAULT_REGION),
+                            can_back=st.can_back, step=step, summary=lambda r: mcp_config.REGIONS[r])
+        if region is BACK:
+            return BACK
+    console = mcp_config.console_url(region)
+    tui.info(S.bold("Get your MCP URL") + S.dim("  (official Zoho MCP console)"))
+    tui.info(f"1. Open {S.accent(console)} and sign in")
+    tui.info("2. Create MCP Server → Tools → Add Tools → Zoho Projects, and add at least:")
+    tui.info(S.dim("   " + ", ".join(mcp_config.REQUIRED_TOOLS)))
+    tui.info("3. Open the Connect tab and copy the MCP URL " + S.dim("(treat it like a password)"))
+    print(S.dim("└"))
+    nxt = tui.choose("Next", [("open", "Open the console in my browser", ""),
+                              ("have", "I already have the URL", ""),
+                              ("skip", "Skip — I'll connect later (creole-zoho mcp)", "")],
+                     multi=False, can_back=True, summary=lambda r: {"open": "opened browser", "have": "have URL",
+                                                                    "skip": "skip"}[r])
+    if nxt is BACK:
+        return BACK
+    if nxt == "skip":
+        return ""
+    if nxt == "open":
+        webbrowser.open(console)
+    return tui.text("Paste MCP URL", hint="input hidden · enter to skip · '<' back", secret=True, step=step,
+                    summary=lambda v: mcp_config.mask_url(v) if v else "skipped")
 
-    # 5 — review
-    plan = [("Skills", ", ".join(names)), ("Harnesses", ", ".join(harnesses)),
-            ("Scope", f"global ({home})" if global_scope else f"project ({base})"),
-            ("MCP", mcp_config.mask_url(mcp_url) if mcp_url else "skipped")]
-    if tty or a.dry_run:
-        step(5, total, "Review" + (" (dry run)" if a.dry_run else ""))
-        for k, v in plan:
-            print(f"  {S.dim(k.ljust(10))} {v}")
-        print()
-    if tty and not a.dry_run and not confirm("Install now?"):
-        print("  cancelled — nothing written.")
-        return 1
 
+def step_mcp(st: State, step: str = "4/5") -> object:
+    a = st.args
+    if a.no_mcp:
+        return SKIPPED
+    url = a.mcp_url or os.environ.get("ZOHO_MCP_URL")
+    res = SKIPPED
+    if not url and st.tty:
+        url = guided_mcp_url(st, step)
+        if url is BACK:
+            return BACK
+        res = PROMPTED
+    if url:
+        try:
+            st.mcp_url = mcp_config.validate_url(url)
+        except mcp_config.McpError as e:
+            if st.tty:
+                print(f"{S.err('✖')} {e}")
+                return step_mcp(st, step)
+            raise SystemExit(f"error: {e}")
+    return res
+
+
+def plan_rows(st: State) -> list:
+    return [("Skills", ", ".join(st.names)),
+            ("Harnesses", ", ".join(HARNESS_INFO[h][0] for h in st.harnesses)),
+            ("Scope", f"global · {st.home}" if st.global_scope else f"project · {st.project}"),
+            ("MCP", mcp_config.mask_url(st.mcp_url) if st.mcp_url else "skipped")]
+
+
+def step_review(st: State) -> object:
+    if not st.tty:
+        return SKIPPED
+    tui.box([f"{S.dim(k.ljust(10))} {v}" for k, v in plan_rows(st)], title="Review")
+    pick = tui.choose("Ready?", [("go", "Install now", ""), ("back", "Go back and change something", ""),
+                                 ("cancel", "Cancel", "nothing will be written")],
+                      multi=False, can_back=True, step="5/5",
+                      summary=lambda r: {"go": "installing", "back": "back", "cancel": "cancelled"}[r])
+    if pick is BACK or pick == "back":
+        return BACK
+    if pick == "cancel":
+        raise KeyboardInterrupt
+    return PROMPTED
+
+
+def run_wizard(steps: list, st: State) -> None:
+    hist: list = []
+    i = 0
+    while i < len(steps):
+        st.can_back = bool(hist)
+        r = steps[i](st)
+        if r is BACK:
+            i = hist.pop() if hist else i
+            continue
+        if r == PROMPTED:
+            hist.append(i)
+        i += 1
+
+
+# ───────────────────────────── execution ─────────────────────────────
+def register_all(st: State, dry_run: bool) -> int:
     errors = 0
-    for h in harnesses:
+    project = None if st.global_scope else st.base
+    for h in st.harnesses:
         label = HARNESS_INFO[h][0]
-        if h == "cursor" and global_scope:
-            print(f"  {S.warn('!')} {label}: skills skipped for --global (Cursor user rules live in its settings; "
-                  "use a project install)")
-        elif a.dry_run:
-            print(f"  {S.dim('·')} {label}: would install {', '.join(names)} under {base}")
-        else:
-            for p in adapters.install(h, names, base, global_scope=global_scope):
-                print(f"  {S.ok('✔')} {label}: {p}")
-    if mcp_url:
-        errors += register_all(harnesses, mcp_url, home, None if global_scope else base, a.dry_run)
+        with tui.Spinner(f"{label}: connecting MCP") as sp:
+            try:
+                msg = mcp_config.register(h, st.mcp_url, home=st.home, project=project, dry_run=dry_run)
+                sp.ok(f"{label} MCP — {msg}")
+            except (mcp_config.McpError, subprocess.SubprocessError, OSError) as e:
+                errors += 1
+                sp.fail(f"{label} MCP — {e}")
+                print(f"  {S.dim('manual:')} {mcp_config.snippet(h, '<your-mcp-url>')}")
+    return errors
+
+
+def _short(p: Path, home: Path) -> str:
+    try:
+        return "~/" + str(p.relative_to(home))
+    except ValueError:
+        return str(p)
+
+
+def install_skills(st: State, dry_run: bool) -> None:
+    for h in st.harnesses:
+        label = HARNESS_INFO[h][0]
+        with tui.Spinner(f"{label}: installing skills") as sp:
+            if h == "cursor" and st.global_scope:
+                sp.warn(f"{label}: skills skipped for --global (Cursor user rules live in its settings; use a project install)")
+            elif dry_run:
+                sp.ok(f"{label}: would install {', '.join(st.names)} under {st.base}")
+            else:
+                written = adapters.install(h, st.names, st.base, global_scope=st.global_scope)
+                sp.ok(f"{label}: {len(written)} file(s) → {_short(written[0].parent, st.home)}")
+
+
+def finish(st: State, errors: int) -> None:
+    steps = []
+    if st.mcp_url:
+        steps.append("Authenticate the Zoho MCP in your harness " + S.dim("(Claude Code: /mcp)"))
+    else:
+        steps.append(f"Connect the Zoho MCP:  {S.bold('creole-zoho mcp')}")
+    steps.append("Try it (read-only): " + S.dim("“list my Zoho portals, then the latest 5 tasks”"))
+    steps.append(f"Health check any time:  {S.bold('creole-zoho doctor')}")
+    print()
+    tui.box([f"{S.accent(str(i))}  {t}" for i, t in enumerate(steps, 1)],
+            title="All set" if not errors else "Finished with issues", color=S.ok if not errors else S.warn)
+    print()
+
+
+def cmd_install(a: argparse.Namespace) -> int:
+    st = State(a, Path.home(), tty=tui.interactive() and not a.yes)
+    if st.tty:
+        tui.banner(version())
+    run_wizard([step_skills, step_harnesses, step_scope, step_mcp, step_review], st)
+    if a.dry_run and not st.tty:
+        tui.box([f"{S.dim(k.ljust(10))} {v}" for k, v in plan_rows(st)], title="Plan (dry run)")
+    if st.tty:
+        print()
+    install_skills(st, a.dry_run)
+    errors = register_all(st, a.dry_run) if st.mcp_url else 0
     if a.dry_run:
         print(f"\n  {S.dim('dry run — nothing was written.')}")
         return 0
-    print(f"\n  {S.ok('Done.')} Next:")
-    if mcp_url:
-        print("   • Authenticate the Zoho MCP in your harness (Claude Code: /mcp).")
-    else:
-        print("   • Connect the MCP: re-run `creole-zoho install` or see skills/zoho-projects-core/references/mcp-setup.md")
-    print("   • Verify (read-only): ask your agent “list my Zoho portals, then the latest 5 tasks”.")
-    print(f"   • Health check any time: {S.bold('creole-zoho doctor')}\n")
+    finish(st, errors)
     return 1 if errors else 0
-
-
-def guided_mcp_url(region: Optional[str]) -> Optional[str]:
-    """Walk the user through creating their server in the official Zoho MCP console and pasting its URL."""
-    explicit = region is not None
-    region = region or mcp_config.DEFAULT_REGION
-    if not explicit:
-        rows = [(r, f"{mcp_config.REGIONS[r]}", "default · India data centre" if r == mcp_config.DEFAULT_REGION else "")
-                for r in mcp_config.REGIONS]
-        print(f"  {S.dim('Which Zoho data centre is your portal on?')}")
-        region = _menu(rows, multi=False, selected=set(),
-                       default_index=list(mcp_config.REGIONS).index(mcp_config.DEFAULT_REGION))[0]
-    console = mcp_config.console_url(region)
-    print(f"\n  {S.bold('Get your MCP URL')} {S.dim('(official Zoho MCP console)')}")
-    print(f"   1. Open {S.accent(console)} and sign in")
-    print("   2. Create MCP Server → Tools → Add Tools → pick the Zoho Projects service and add at least:")
-    print(f"      {S.dim(', '.join(mcp_config.REQUIRED_TOOLS))}")
-    print("   3. Open the Connect tab and copy the MCP URL (treat it like a password)\n")
-    if confirm("Open the console in your browser?"):
-        webbrowser.open(console)
-    print(f"  {S.dim('Paste the MCP URL here, or leave blank to skip.')}")
-    return ask("MCP URL") or None
-
-
-def register_all(harnesses: list, url: str, home: Path, project: Optional[Path], dry_run: bool) -> int:
-    errors = 0
-    for h in harnesses:
-        label = HARNESS_INFO[h][0]
-        try:
-            msg = mcp_config.register(h, url, home=home, project=project, dry_run=dry_run)
-            print(f"  {S.ok('✔') if not dry_run else S.dim('·')} {label} MCP: {msg}")
-        except (mcp_config.McpError, subprocess.SubprocessError, OSError) as e:
-            errors += 1
-            print(f"  {S.err('✖')} {label} MCP: {e}")
-            print(f"      {S.dim('manual:')} {mcp_config.snippet(h, '<your-mcp-url>')}")
-    return errors
 
 
 def cmd_mcp(a: argparse.Namespace) -> int:
     """Connect (or reconnect) only the Zoho Projects MCP server, without touching skills."""
-    home = Path.home()
-    tty = interactive() and not a.yes
-    if tty:
-        banner()
-    detected = detect_harnesses(home)
-    if a.harness:
-        harnesses = _split(a.harness, adapters.HARNESSES, "harness")
-    elif tty:
-        step(1, 2, "Choose harnesses")
-        rows = [(h, HARNESS_INFO[h][0], "detected on this machine" if h in detected else "") for h in adapters.HARNESSES]
-        harnesses = _menu(rows, multi=True, selected=set(detected) or set(adapters.HARNESSES))
-        print()
-    else:
-        harnesses = detected or list(adapters.HARNESSES)
-    project = Path(a.project).expanduser().resolve() if a.project else None
-    url = a.mcp_url or os.environ.get("ZOHO_MCP_URL")
-    if not url and tty:
-        step(2, 2, "Connect the Zoho Projects MCP server")
-        url = guided_mcp_url(a.region)
-        print()
-    if not url:
+    st = State(a, Path.home(), tty=tui.interactive() and not a.yes)
+    if a.project:
+        st.project, st.global_scope = Path(a.project).expanduser().resolve(), False
+    if st.tty:
+        tui.banner(version())
+    run_wizard([lambda s: step_harnesses(s, "1/2"), lambda s: step_mcp(s, "2/2")], st)
+    if not st.mcp_url:
         print(f"  Create your MCP server at {mcp_config.console_url(a.region or mcp_config.DEFAULT_REGION)} "
               "(Connect tab → copy URL), then run: creole-zoho mcp --mcp-url <url>")
         return 1
-    try:
-        url = mcp_config.validate_url(url)
-    except mcp_config.McpError as e:
-        raise SystemExit(f"error: {e}")
-    errors = register_all(harnesses, url, home, project, a.dry_run)
+    errors = register_all(st, a.dry_run)
     if not a.dry_run and not errors:
         print(f"\n  {S.ok('Done.')} Authenticate in your harness (Claude Code: /mcp).\n")
     return 1 if errors else 0
@@ -352,32 +330,43 @@ def cmd_mcp(a: argparse.Namespace) -> int:
 
 def cmd_list(_: argparse.Namespace) -> int:
     for name, _, desc in skill_rows():
-        print(f"{S.bold(name)}\n  {desc}")
+        print(f"{S.bold(name)}\n  {S.dim(tui.clip(desc, tui.cols() - 4))}")
     print("\nharnesses: " + ", ".join(adapters.HARNESSES))
     return 0
 
 
 def cmd_doctor(_: argparse.Namespace) -> int:
     home = Path.home()
-    bad = 0
     ok_py = sys.version_info >= (3, 9)
-    print(f"{S.ok('✔') if ok_py else S.err('✖')} python {sys.version.split()[0]} (need ≥ 3.9)")
-    bad += not ok_py
+    rows = [f"{S.ok('✔') if ok_py else S.err('✖')} {'python'.ljust(26)} {sys.version.split()[0]}"
+            + ("" if ok_py else "  (need ≥ 3.9)")]
+    hints = []
     for h, (label, exe, cfg) in HARNESS_INFO.items():
-        present = shutil.which(exe) or (home / cfg).is_dir()
-        proj_rel, glob_rel = adapters.SKILL_DIRS.get(h, (None, None))
-        installed = [n for n in adapters.list_skills()
-                     if glob_rel and (home / glob_rel / n / "SKILL.md").is_file()]
+        present = bool(shutil.which(exe) or (home / cfg).is_dir())
+        _, glob_rel = adapters.SKILL_DIRS.get(h, (None, None))
+        installed = [n for n in adapters.list_skills() if glob_rel and (home / glob_rel / n / "SKILL.md").is_file()]
         mcp_path = mcp_config.config_path(h, home, None)
-        has_mcp = False
         if h == "claude" and shutil.which("claude"):
             has_mcp = mcp_config.default_runner(["claude", "mcp", "get", mcp_config.SERVER_NAME], None).returncode == 0
-        elif mcp_path and mcp_path.exists():
-            has_mcp = mcp_config.SERVER_NAME in mcp_path.read_text(encoding="utf-8", errors="ignore")
-        print(f"{S.ok('✔') if present else S.dim('–')} {label}: "
-              f"{'found' if present else 'not found'}; skills: {', '.join(installed) or 'none (global)'}; "
-              f"MCP: {'yes' if has_mcp else 'not registered'}")
-    return 1 if bad else 0
+        else:
+            has_mcp = bool(mcp_path and mcp_path.exists() and
+                           mcp_config.SERVER_NAME in mcp_path.read_text(encoding="utf-8", errors="ignore"))
+        mark = S.ok("✔") if present and installed and has_mcp else (S.warn("!") if present else S.dim("–"))
+        skills = f"{len(installed)} skill(s)" if installed else "no skills"
+        rows.append(f"{mark} {label.ljust(26)} {S.dim('found' if present else 'not found')} · {skills} · "
+                    f"MCP {'on' if has_mcp else 'off'}")
+        if present and not has_mcp:
+            hints.append(f"{label}: creole-zoho mcp --harness {h}")
+        if present and not installed and h != "cursor":
+            hints.append(f"{label}: creole-zoho install --harness {h} --global")
+    print()
+    tui.box(rows, title="creole-zoho doctor")
+    if hints:
+        print("\n  " + S.bold("Fix:"))
+        for h in hints:
+            print(f"   {S.accent('›')} {h}")
+    print()
+    return 0 if ok_py else 1
 
 
 def cmd_update(_: argparse.Namespace) -> int:
@@ -392,6 +381,7 @@ def cmd_update(_: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="creole-zoho", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--version", action="version", version=f"creole-zoho {version()}")
     sub = ap.add_subparsers(dest="cmd")
     ins = sub.add_parser("install", help="interactive onboarding (default)")
     ins.add_argument("--skills", help="comma list or 'all' (default: ask / all)")
@@ -400,7 +390,7 @@ def build_parser() -> argparse.ArgumentParser:
     scope.add_argument("--global", dest="global_scope", action="store_true", help="install under $HOME")
     scope.add_argument("--project", metavar="DIR", help="install into this project directory")
     ins.add_argument("--mcp-url", help="Zoho Projects MCP URL (or env ZOHO_MCP_URL)")
-    ins.add_argument("--region", choices=list(mcp_config.REGIONS), help="Zoho data centre for the MCP console (default: ask / in)")
+    ins.add_argument("--region", choices=list(mcp_config.REGIONS), help="Zoho data centre for the MCP console")
     ins.add_argument("--no-mcp", action="store_true", help="skip the MCP step")
     ins.add_argument("-y", "--yes", action="store_true", help="no prompts; use flags/defaults")
     ins.add_argument("--dry-run", action="store_true", help="show what would change; write nothing")
@@ -409,6 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--project", metavar="DIR", help="register in this project instead of globally")
     m.add_argument("--mcp-url")
     m.add_argument("--region", choices=list(mcp_config.REGIONS))
+    m.add_argument("--no-mcp", action="store_true", help=argparse.SUPPRESS)
     m.add_argument("-y", "--yes", action="store_true")
     m.add_argument("--dry-run", action="store_true")
     sub.add_parser("list", help="list skills and harnesses")
@@ -419,13 +410,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or (argv[0] not in COMMANDS and argv[0] not in ("-h", "--help")):
+    if not argv or (argv[0] not in COMMANDS and argv[0] not in ("-h", "--help", "--version")):
         argv.insert(0, "install")
     a = build_parser().parse_args(argv)
     try:
-        return {"install": cmd_install, "mcp": cmd_mcp, "list": cmd_list, "doctor": cmd_doctor, "update": cmd_update}[a.cmd](a)
+        return {"install": cmd_install, "mcp": cmd_mcp, "list": cmd_list, "doctor": cmd_doctor,
+                "update": cmd_update}[a.cmd](a)
     except KeyboardInterrupt:
-        print("\n  cancelled.")
+        print(f"\n{S.dim('│')}\n{S.dim('└')} cancelled — nothing was written after this point.")
         return 130
 
 

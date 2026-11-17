@@ -29,6 +29,10 @@ Starts an interactive onboarding (needs Python 3.9+, no other dependencies):
    masked in output. Authenticate in the harness afterwards (Claude Code: `/mcp`).
 5. **Review → confirm → install.**
 
+Controls: **↑/↓** move · **space** toggle · **a** select all · type to **filter** · **enter** confirm ·
+**esc** go back a step · **Ctrl-C** cancel (nothing is written until the final "Install now"). The MCP URL is read with
+hidden input so it never lands in your terminal scrollback.
+
 The installer leaves a `creole-zoho` command in `~/.local/bin`:
 ```bash
 creole-zoho                 # onboarding again
