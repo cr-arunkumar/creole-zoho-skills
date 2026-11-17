@@ -12,29 +12,37 @@ descriptions and progress comments, log time and move work to review **in your o
 
 Org rules live **only** in the org skill; the core never contains them.
 
-## Install
-Everything is Python 3.9+ standard library.
-
+## Install (one line)
 ```bash
-# Claude Code / Claude.ai  (or: /plugin marketplace add <this repo>)
-python3 scripts/install.py --harness claude --global
-
-# Cursor (writes .cursor/rules/*.mdc into a project)
-python3 scripts/install.py --harness cursor --project ~/code/my-app
-
-# Antigravity / Gemini CLI
-python3 scripts/install.py --harness antigravity --global
-
-# Codex, Copilot and other AGENTS.md-aware tools
-python3 scripts/install.py --harness codex --project ~/code/my-app
-
-# Everything, preview only
-python3 scripts/install.py --harness all --project . --dry-run
+curl -fsSL https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/main/install.sh | sh
 ```
-Or just open this repo in the harness: root `AGENTS.md` / `GEMINI.md` point at `skills/`, and generated copies are
-committed in `.claude/skills`, `.agent/skills`, `.cursor/rules`.
+Starts an interactive onboarding (needs Python 3.9+, no other dependencies):
 
-Then connect the Zoho Projects MCP server: `skills/zoho-projects-core/references/mcp-setup.md`.
+1. **Skills** — pick which skills to install (`zoho-projects-core` is always included).
+2. **Harnesses** — Claude Code, Cursor, Antigravity / Gemini CLI, Codex / Copilot (AGENTS.md); detected ones are pre-ticked.
+3. **Scope** — global (`$HOME`) or a project folder.
+4. **Zoho MCP** — paste your Zoho Projects MCP URL; it is registered with every chosen harness
+   (`claude mcp add`, `~/.cursor/mcp.json`, `~/.gemini/settings.json`, `~/.codex/config.toml`). Existing config is
+   preserved and backed up to `*.bak`. The URL may contain a key, so it is written only to your harness config and is
+   masked in output. Authenticate in the harness afterwards (Claude Code: `/mcp`).
+5. **Review → confirm → install.**
+
+The installer leaves a `creole-zoho` command in `~/.local/bin`:
+```bash
+creole-zoho                 # onboarding again
+creole-zoho list            # skills and harnesses
+creole-zoho doctor          # harnesses found, skills installed, MCP registered
+creole-zoho update          # fetch the latest version
+```
+Non-interactive (CI, dotfiles):
+```bash
+creole-zoho install --yes --harness claude,cursor --project ~/code/app --mcp-url "$ZOHO_MCP_URL" [--skills a,b] [--no-mcp] [--dry-run]
+# or straight from curl:
+curl -fsSL https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/main/install.sh | sh -s -- install --yes --harness all --global --no-mcp
+```
+Env: `CZ_REF` (branch/tag), `CZ_HOME`, `CZ_BIN`, `ZOHO_MCP_URL`. The older flag-only `scripts/install.py` still works.
+Or just open this repo in a harness: root `AGENTS.md` / `GEMINI.md` point at `skills/`, and generated copies are
+committed in `.claude/skills`, `.agent/skills`, `.cursor/rules`. MCP details: `skills/zoho-projects-core/references/mcp-setup.md`.
 
 ## Safety model
 - Reads first; ids are resolved at runtime, never hardcoded.

@@ -10,4 +10,5 @@ jobs:
           python-version: "3.12"
       - run: pip install pytest fastapi uvicorn httpx
       - run: python scripts/build_adapters.py --check
+      - run: sh -n install.sh
       - run: python -m pytest -q tests
