@@ -14,9 +14,11 @@ Org rules live **only** in the org skill; the core never contains them.
 
 ## Install (one line)
 ```bash
+npx creole-zoho@latest
+# or, without Node:
 curl -fsSL https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/main/install.sh | sh
 ```
-Starts an interactive onboarding (needs Python 3.9+, no other dependencies):
+Starts an interactive onboarding (needs Python 3.9+; `npx` additionally needs Node 16+):
 
 1. **Skills** — pick which skills to install (`zoho-projects-core` is always included).
 2. **Harnesses** — Claude Code, Cursor, Antigravity / Gemini CLI, Codex / Copilot (AGENTS.md); detected ones are pre-ticked.
@@ -43,6 +45,7 @@ creole-zoho update          # fetch the latest version
 ```
 Non-interactive (CI, dotfiles):
 ```bash
+npx creole-zoho@latest install --yes --harness claude --global --no-mcp
 creole-zoho install --yes --harness claude,cursor --project ~/code/app --mcp-url "$ZOHO_MCP_URL" [--skills a,b] [--no-mcp] [--dry-run]
 # or straight from curl:
 curl -fsSL https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/main/install.sh | sh -s -- install --yes --harness all --global --no-mcp

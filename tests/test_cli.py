@@ -76,3 +76,11 @@ def test_mcp_subcommand_registers_without_touching_skills(tmp_path):
 def test_mcp_subcommand_without_url_points_to_console(tmp_path):
     r = run("mcp", "--yes", "--harness", "codex", "--region", "in", home=tmp_path)
     assert r.returncode == 1 and "https://mcp.zoho.in/" in r.stdout
+
+
+def test_npm_package_version_matches_plugin_and_bin_exists():
+    import json
+    pkg = json.loads((REPO / "package.json").read_text())
+    plugin = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text())
+    assert pkg["version"] == plugin["version"]
+    assert (REPO / pkg["bin"]["creole-zoho"]).is_file()

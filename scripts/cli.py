@@ -372,7 +372,7 @@ def cmd_doctor(_: argparse.Namespace) -> int:
 def cmd_update(_: argparse.Namespace) -> int:
     script = adapters.REPO / "install.sh"
     if not script.is_file():
-        print("install.sh not found; re-run the curl installer from the README.")
+        print("No curl install found. Using npm? Run: npx creole-zoho@latest   (or re-run the curl installer from the README)")
         return 1
     env = dict(os.environ, CZ_NO_RUN="1")
     return subprocess.run(["sh", str(script)], env=env).returncode
