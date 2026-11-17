@@ -1,0 +1,76 @@
+# Publishes the `creole-zoho` npm package.
+#
+# How to cut a release:
+#   1. Bump "version" in package.json AND .claude-plugin/plugin.json
+#      (a test enforces that they match).
+#   2. Commit the change.
+#   3. git tag vX.Y.Z && git push --tags
+#      (or publish a GitHub release for that tag).
+#
+# The tag (without the leading "v") must equal package.json "version".
+# If that version is already on npm, the publish step is skipped, so reruns are safe.
+# Requires the NPM_TOKEN repository secret.
+name: publish
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - run: pip install pytest fastapi uvicorn httpx
+      - run: python scripts/build_adapters.py --check
+      - run: sh -n install.sh
+      - run: python -m pytest -q tests
+
+      - name: Guard - tag must match package.json version
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+        run: |
+          pkg_version="$(node -p "require('./package.json').version")"
+          tag_version="${TAG#v}"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::Tag '$TAG' (version $tag_version) does not match package.json version $pkg_version"
+            exit 1
+          fi
+          echo "Tag $TAG matches package.json version $pkg_version"
+
+      - name: Check whether this version is already on npm
+        id: npm_check
+        run: |
+          pkg_name="$(node -p "require('./package.json').name")"
+          pkg_version="$(node -p "require('./package.json').version")"
+          if npm view "${pkg_name}@${pkg_version}" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "${pkg_name}@${pkg_version} is already published on npm - nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "${pkg_name}@${pkg_version} not found on npm - will publish."
+          fi
+
+      - name: Publish to npm
+        if: steps.npm_check.outputs.exists != 'true'
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
