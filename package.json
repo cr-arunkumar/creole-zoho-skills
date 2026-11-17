@@ -1,10 +1,10 @@
 {
   "name": "zoho-skills",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Zoho Projects automation for AI agents: org rule packs + a gated MCP proxy, with a guided multi-harness installer (Claude Code, Cursor, Antigravity/Gemini, Codex).",
   "bin": {
     "zoho-skills": "bin/zoho-skills.js",
-    "creole-zoho": "bin/zoho-skills.js"
+    "creole-zoho": "bin/creole-zoho.js"
   },
   "files": [
     "bin/",

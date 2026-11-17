@@ -74,7 +74,7 @@ function findCli(uv) {
 }
 
 async function main() {
-  const invoked = path.basename(process.argv[1] || "").replace(/\.js$/, "");
+  const invoked = process.env.ZOHO_SKILLS_BIN_ALIAS || path.basename(process.argv[1] || "").replace(/\.js$/, "");
   if (invoked === "creole-zoho") {
     console.error("note: `creole-zoho` is deprecated and now an alias; use `zoho-skills` instead.");
   }
