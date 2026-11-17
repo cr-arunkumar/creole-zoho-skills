@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 from typing import Optional
 
@@ -26,7 +27,7 @@ HARNESS_INFO = {  # harness -> (label, executable to detect, config dir under $H
     "antigravity": ("Antigravity / Gemini CLI", "gemini", ".gemini"),
     "codex": ("Codex / Copilot / AGENTS.md tools", "codex", ".codex"),
 }
-COMMANDS = ("install", "list", "doctor", "update")
+COMMANDS = ("install", "mcp", "list", "doctor", "update")
 
 
 # ───────────────────────────── terminal styling ─────────────────────────────
@@ -230,8 +231,7 @@ def cmd_install(a: argparse.Namespace) -> int:
         mcp_url = a.mcp_url or os.environ.get("ZOHO_MCP_URL")
         if not mcp_url and tty:
             step(4, total, "Connect the Zoho Projects MCP server")
-            print(f"  {S.dim('Paste your Zoho MCP URL (from Zoho MCP / Developer console). Leave blank to skip.')}")
-            mcp_url = ask("MCP URL") or None
+            mcp_url = guided_mcp_url(a.region)
             print()
         if mcp_url:
             try:
@@ -263,15 +263,8 @@ def cmd_install(a: argparse.Namespace) -> int:
         else:
             for p in adapters.install(h, names, base, global_scope=global_scope):
                 print(f"  {S.ok('✔')} {label}: {p}")
-        if mcp_url:
-            try:
-                msg = mcp_config.register(h, mcp_url, home=home, project=None if global_scope else base,
-                                          dry_run=a.dry_run)
-                print(f"  {S.ok('✔') if not a.dry_run else S.dim('·')} {label} MCP: {msg}")
-            except (mcp_config.McpError, subprocess.SubprocessError, OSError) as e:
-                errors += 1
-                print(f"  {S.err('✖')} {label} MCP: {e}")
-                print(f"      {S.dim('manual:')} {mcp_config.snippet(h, '<your-mcp-url>')}")
+    if mcp_url:
+        errors += register_all(harnesses, mcp_url, home, None if global_scope else base, a.dry_run)
     if a.dry_run:
         print(f"\n  {S.dim('dry run — nothing was written.')}")
         return 0
@@ -282,6 +275,78 @@ def cmd_install(a: argparse.Namespace) -> int:
         print("   • Connect the MCP: re-run `creole-zoho install` or see skills/zoho-projects-core/references/mcp-setup.md")
     print("   • Verify (read-only): ask your agent “list my Zoho portals, then the latest 5 tasks”.")
     print(f"   • Health check any time: {S.bold('creole-zoho doctor')}\n")
+    return 1 if errors else 0
+
+
+def guided_mcp_url(region: Optional[str]) -> Optional[str]:
+    """Walk the user through creating their server in the official Zoho MCP console and pasting its URL."""
+    explicit = region is not None
+    region = region or mcp_config.DEFAULT_REGION
+    if not explicit:
+        rows = [(r, f"{mcp_config.REGIONS[r]}", "default · India data centre" if r == mcp_config.DEFAULT_REGION else "")
+                for r in mcp_config.REGIONS]
+        print(f"  {S.dim('Which Zoho data centre is your portal on?')}")
+        region = _menu(rows, multi=False, selected=set(),
+                       default_index=list(mcp_config.REGIONS).index(mcp_config.DEFAULT_REGION))[0]
+    console = mcp_config.console_url(region)
+    print(f"\n  {S.bold('Get your MCP URL')} {S.dim('(official Zoho MCP console)')}")
+    print(f"   1. Open {S.accent(console)} and sign in")
+    print("   2. Create MCP Server → Tools → Add Tools → pick the Zoho Projects service and add at least:")
+    print(f"      {S.dim(', '.join(mcp_config.REQUIRED_TOOLS))}")
+    print("   3. Open the Connect tab and copy the MCP URL (treat it like a password)\n")
+    if confirm("Open the console in your browser?"):
+        webbrowser.open(console)
+    print(f"  {S.dim('Paste the MCP URL here, or leave blank to skip.')}")
+    return ask("MCP URL") or None
+
+
+def register_all(harnesses: list, url: str, home: Path, project: Optional[Path], dry_run: bool) -> int:
+    errors = 0
+    for h in harnesses:
+        label = HARNESS_INFO[h][0]
+        try:
+            msg = mcp_config.register(h, url, home=home, project=project, dry_run=dry_run)
+            print(f"  {S.ok('✔') if not dry_run else S.dim('·')} {label} MCP: {msg}")
+        except (mcp_config.McpError, subprocess.SubprocessError, OSError) as e:
+            errors += 1
+            print(f"  {S.err('✖')} {label} MCP: {e}")
+            print(f"      {S.dim('manual:')} {mcp_config.snippet(h, '<your-mcp-url>')}")
+    return errors
+
+
+def cmd_mcp(a: argparse.Namespace) -> int:
+    """Connect (or reconnect) only the Zoho Projects MCP server, without touching skills."""
+    home = Path.home()
+    tty = interactive() and not a.yes
+    if tty:
+        banner()
+    detected = detect_harnesses(home)
+    if a.harness:
+        harnesses = _split(a.harness, adapters.HARNESSES, "harness")
+    elif tty:
+        step(1, 2, "Choose harnesses")
+        rows = [(h, HARNESS_INFO[h][0], "detected on this machine" if h in detected else "") for h in adapters.HARNESSES]
+        harnesses = _menu(rows, multi=True, selected=set(detected) or set(adapters.HARNESSES))
+        print()
+    else:
+        harnesses = detected or list(adapters.HARNESSES)
+    project = Path(a.project).expanduser().resolve() if a.project else None
+    url = a.mcp_url or os.environ.get("ZOHO_MCP_URL")
+    if not url and tty:
+        step(2, 2, "Connect the Zoho Projects MCP server")
+        url = guided_mcp_url(a.region)
+        print()
+    if not url:
+        print(f"  Create your MCP server at {mcp_config.console_url(a.region or mcp_config.DEFAULT_REGION)} "
+              "(Connect tab → copy URL), then run: creole-zoho mcp --mcp-url <url>")
+        return 1
+    try:
+        url = mcp_config.validate_url(url)
+    except mcp_config.McpError as e:
+        raise SystemExit(f"error: {e}")
+    errors = register_all(harnesses, url, home, project, a.dry_run)
+    if not a.dry_run and not errors:
+        print(f"\n  {S.ok('Done.')} Authenticate in your harness (Claude Code: /mcp).\n")
     return 1 if errors else 0
 
 
@@ -335,9 +400,17 @@ def build_parser() -> argparse.ArgumentParser:
     scope.add_argument("--global", dest="global_scope", action="store_true", help="install under $HOME")
     scope.add_argument("--project", metavar="DIR", help="install into this project directory")
     ins.add_argument("--mcp-url", help="Zoho Projects MCP URL (or env ZOHO_MCP_URL)")
+    ins.add_argument("--region", choices=list(mcp_config.REGIONS), help="Zoho data centre for the MCP console (default: ask / in)")
     ins.add_argument("--no-mcp", action="store_true", help="skip the MCP step")
     ins.add_argument("-y", "--yes", action="store_true", help="no prompts; use flags/defaults")
     ins.add_argument("--dry-run", action="store_true", help="show what would change; write nothing")
+    m = sub.add_parser("mcp", help="connect only the Zoho Projects MCP server (guided)")
+    m.add_argument("--harness", help="comma list or 'all'")
+    m.add_argument("--project", metavar="DIR", help="register in this project instead of globally")
+    m.add_argument("--mcp-url")
+    m.add_argument("--region", choices=list(mcp_config.REGIONS))
+    m.add_argument("-y", "--yes", action="store_true")
+    m.add_argument("--dry-run", action="store_true")
     sub.add_parser("list", help="list skills and harnesses")
     sub.add_parser("doctor", help="check python, harnesses, installed skills and MCP")
     sub.add_parser("update", help="fetch the latest version of this tool")
@@ -350,7 +423,7 @@ def main(argv: Optional[list] = None) -> int:
         argv.insert(0, "install")
     a = build_parser().parse_args(argv)
     try:
-        return {"install": cmd_install, "list": cmd_list, "doctor": cmd_doctor, "update": cmd_update}[a.cmd](a)
+        return {"install": cmd_install, "mcp": cmd_mcp, "list": cmd_list, "doctor": cmd_doctor, "update": cmd_update}[a.cmd](a)
     except KeyboardInterrupt:
         print("\n  cancelled.")
         return 130

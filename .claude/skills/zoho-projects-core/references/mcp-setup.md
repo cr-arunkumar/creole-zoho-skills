@@ -6,7 +6,11 @@ The skill needs a Zoho Projects MCP server that exposes `get_portals`, `get_proj
 
 No secrets live in this repo. Authenticate through your harness's MCP / OAuth flow.
 
-Fastest path: `creole-zoho install` asks for the MCP URL and registers it with every harness you choose;
+Official server: create yours in the Zoho MCP console (India: https://mcp.zoho.in/ · others: mcp.zoho.com / .eu /
+.com.au / .jp) → Create MCP Server → Tools → Add Tools → Zoho Projects → copy the URL from the Connect tab. Treat the URL
+like a password.
+
+Fastest path: `creole-zoho mcp` (or `creole-zoho install`) walks through that and registers the URL with every harness you choose;
 `creole-zoho doctor` shows what is connected. The manual steps below do the same thing by hand.
 
 | Harness | Where to add the MCP server |

@@ -64,3 +64,15 @@ def test_list_and_doctor(tmp_path):
 
 def test_install_sh_is_valid_posix_sh():
     assert subprocess.run(["sh", "-n", str(REPO / "install.sh")]).returncode == 0
+
+
+def test_mcp_subcommand_registers_without_touching_skills(tmp_path):
+    r = run("mcp", "--yes", "--harness", "antigravity", "--mcp-url", URL, home=tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / ".gemini/settings.json").is_file()
+    assert not (tmp_path / ".gemini/antigravity").exists()
+
+
+def test_mcp_subcommand_without_url_points_to_console(tmp_path):
+    r = run("mcp", "--yes", "--harness", "codex", "--region", "in", home=tmp_path)
+    assert r.returncode == 1 and "https://mcp.zoho.in/" in r.stdout

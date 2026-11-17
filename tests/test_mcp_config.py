@@ -72,3 +72,10 @@ def test_url_validation(bad):
 
 def test_mask_url_hides_key():
     assert "SECRET" not in m.mask_url(URL)
+
+
+def test_console_urls_default_to_india_and_reject_unknown():
+    assert m.console_url(m.DEFAULT_REGION) == "https://mcp.zoho.in/"
+    assert m.console_url("com") == "https://mcp.zoho.com/"
+    with pytest.raises(m.McpError):
+        m.console_url("mars")

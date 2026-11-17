@@ -21,7 +21,9 @@ Starts an interactive onboarding (needs Python 3.9+, no other dependencies):
 1. **Skills** — pick which skills to install (`zoho-projects-core` is always included).
 2. **Harnesses** — Claude Code, Cursor, Antigravity / Gemini CLI, Codex / Copilot (AGENTS.md); detected ones are pre-ticked.
 3. **Scope** — global (`$HOME`) or a project folder.
-4. **Zoho MCP** — paste your Zoho Projects MCP URL; it is registered with every chosen harness
+4. **Zoho MCP** — the CLI points you at the official Zoho MCP console for your data centre (default
+   [mcp.zoho.in](https://mcp.zoho.in/)), tells you which Zoho Projects tools to add, offers to open the page, then you
+   paste the URL from the console's **Connect** tab; it is registered with every chosen harness
    (`claude mcp add`, `~/.cursor/mcp.json`, `~/.gemini/settings.json`, `~/.codex/config.toml`). Existing config is
    preserved and backed up to `*.bak`. The URL may contain a key, so it is written only to your harness config and is
    masked in output. Authenticate in the harness afterwards (Claude Code: `/mcp`).
@@ -30,6 +32,7 @@ Starts an interactive onboarding (needs Python 3.9+, no other dependencies):
 The installer leaves a `creole-zoho` command in `~/.local/bin`:
 ```bash
 creole-zoho                 # onboarding again
+creole-zoho mcp             # guided: only (re)connect the Zoho Projects MCP (--region in|com|eu|com.au|jp)
 creole-zoho list            # skills and harnesses
 creole-zoho doctor          # harnesses found, skills installed, MCP registered
 creole-zoho update          # fetch the latest version

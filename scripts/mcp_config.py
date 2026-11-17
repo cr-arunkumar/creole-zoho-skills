@@ -18,11 +18,31 @@ SERVER_NAME = "zoho-projects"
 TOML_START = "# creole-zoho-skills:start"
 TOML_END = "# creole-zoho-skills:end"
 
+# Official Zoho MCP console, per data centre. This is where the user creates their MCP server, adds the Zoho
+# Projects tools and copies the MCP URL from the "Connect" tab. The default matches the portal in use (India).
+REGIONS = {
+    "in": "https://mcp.zoho.in/",
+    "com": "https://mcp.zoho.com/",
+    "eu": "https://mcp.zoho.eu/",
+    "com.au": "https://mcp.zoho.com.au/",
+    "jp": "https://mcp.zoho.jp/",
+}
+DEFAULT_REGION = "in"
+# Tools the skills call; add these (Zoho Projects service) when creating the server in the console.
+REQUIRED_TOOLS = ["get_portals", "get_projects_list", "get_tasks_by_project", "get_task_details",
+                  "create_a_task", "update_a_task"]
+
 Runner = Callable[[list, Optional[Path]], "subprocess.CompletedProcess"]
 
 
 class McpError(Exception):
     pass
+
+
+def console_url(region: str) -> str:
+    if region not in REGIONS:
+        raise McpError(f"unknown region {region!r}; choose from: {', '.join(REGIONS)}")
+    return REGIONS[region]
 
 
 def validate_url(url: str) -> str:
