@@ -1,0 +1,167 @@
+---
+description: "Creole Studios (portal creolestudiosdotcom1) rules for Zoho Projects — task title format, 40–60 word descriptions, substantive technical comments, time logging and moving tasks to 'In QA Review' so the daily Zoho Task Evaluation scores 9.0–10.0. Use when the Zoho portal org is Creole Studios, or the user mentions Creole Studios Zoho tasks, daily evaluation, task score, logging hours, or 'move to QA'."
+globs:
+alwaysApply: false
+---
+# Creole Studios — Zoho Projects rules
+
+Requires `zoho-projects-core` (read-first, ID resolution, dry-run, read-only mode). These rules override its defaults.
+Goal: every task, description, comment and status change scores 9.0–10.0 on the Creole Studios Zoho Task Evaluation
+(10.0 is the ceiling; the aim is to remove every deduction in `references/scoring-rubric.md`).
+
+## Standards at a glance
+| Area | Rule |
+|------|------|
+| Title | `<Verb> <object> <system> [X.X hrs]`, ≤ 200 chars. Empty title → derive from the description |
+| Description | 40–60 words: scope, requirements, files/APIs/schemas, "done" criteria. Never blank, never ≤ 6 words |
+| Progress comment | 25–60 words: files/modules changed, APIs/schemas/packages, errors resolved, how tested (counts/commands). Never "Done"/"Fixed", never a copied checklist |
+| Time | Finish within planned + 5 min. Early → add unit tests/edge cases. Running long → comment the roadblock immediately. Log actual hours (0h = score 0.0) |
+| Status | Backlog → In Progress → **In QA Review** (with self-testing notes). Never leave finished work In Progress; never mark Completed |
+| Partial delivery | On ≥ 3h tasks don't leave deliverables "pending" unless an external blocker is named (cap 5.0) |
+| Meetings | Dedicated meeting task; if logged in a technical task, mention it in the description and explain it in comments |
+
+## Workflow
+**Create** — collect what/who/hours/billable; default project, list and parent to the last created task (core step 2);
+build title + description; run `python3 scripts/lint_task.py --draft --json`; fix every ERROR/WARN; dry-run; create in
+the person's weekly bucket (`W47 …` → `Name: N hours`) with status Backlog (or In Progress if already started).
+
+**Update / finish** — read the task; draft the technical comment; lint with the final fields
+(`python3 scripts/lint_task.py --json`); dry-run; post the comment and hours (or output them ready-to-paste if the
+server has no comment/timelog tool); set status **In QA Review**.
+
+**Audit** — for "how will this score?" run the linter on the task's fields; report the estimated score (a
+heuristic from the guide's 10 examples, not the real engine), each deduction, and the rewrite that removes it.
+
+## References
+- `references/conventions.md` — hierarchy, title format, statuses, ids
+- `references/scoring-rubric.md` — the guide's 10 scored examples, deductions and checklist
+- `references/examples.md` — before/after titles, descriptions, comments
+- `scripts/lint_task.py` — offline checker + estimated score
+
+
+---
+<!-- reference: creole-studios-zoho/references/conventions.md -->
+# Creole Studios Zoho Projects conventions
+
+Observed from the live portal (read-only) and the Zoho Task Evaluation guide.
+
+## Portal
+- Portal name `creolestudiosdotcom1` (Creole Studios), timezone Asia/Kolkata. Resolve the numeric portal id with `get_portals`; never hardcode.
+- Example project: *Research & Training 2025*, task list *Task List 2026*. Resolve ids by name with `get_projects_list` / `get_all_project_task_lists`.
+
+## Hierarchy (depth 0 → 2)
+| Depth | Example | Notes |
+|-------|---------|-------|
+| 0 weekly parent | `W47 - Sample tasks added by CKP by individual users - 20 hours (Asha 14, Ravi 6)` | one per week |
+| 1 person bucket | `Asha: 14 hours` | one per person per week, status Backlog |
+| 2 task | `Zoho Automatic Task Creation Research & Training [8.0 hrs]` | the unit that is evaluated |
+
+Create tasks under the person's bucket for the current week (`parental_info.parent_task_id`). If the bucket does not exist, tell the user and ask before creating it.
+
+## Title
+`<Imperative, specific title> [X.X hrs]`
+- Start with a verb (Implement, Fix, Upgrade, Review, Migrate…), name the system/module, ≤ 200 characters.
+- Append the planned hours as `[X.X hrs]` (one decimal). Hours must equal the task's planned duration.
+- **Empty title fallback:** derive from the description — first strong verb + object + system, e.g. description "Upgrade PHP 8.3 to 8.5 and WordPress 7.0 to 7.1 on Site A" → `Upgrade PHP and WordPress on Site A [4.0 hrs]`. Never use "Task", "Update", "Work", "Misc".
+- Meetings: `Meeting – <purpose> [X.X hrs]` under a dedicated meeting task.
+
+## Description (40–60 words)
+Scope, requirements, files/modules/APIs/schemas involved, and what "done" looks like. > 6 words minimum, never empty.
+
+## Time
+- Duration/work are `HH:MM` hours. Planned vs logged is scored; grace buffer is +5 minutes.
+- Billing type: `billable`, `non_billable` or `none` — ask if unclear.
+
+## Statuses
+Backlog → In Progress → **In QA Review** (final state for developers) → Completed (human only).
+Resolve each status id at runtime via the field-options lookup for `tasks` / `status` filtered by project; ids differ per portal and project, so never hardcode them.
+Status is sent as `status: {"id": "<id>"}`; names are rejected by the API.
+
+## "Last create" defaults
+When project/list/parent are unspecified, read the most recently created task (`sort_by=DESC(created_time)`), reuse its project, task list and parent bucket, and confirm with the user.
+
+
+---
+<!-- reference: creole-studios-zoho/references/examples.md -->
+# Before / after examples
+
+## Titles
+| Bad | Good |
+|-----|------|
+| `Update` | `Upgrade PHP and WordPress on Site A [4.0 hrs]` |
+| `Dribble` | `Create Dribbble UI screens for landing page concept [1.0 hrs]` |
+| *(empty, description: "Research Zoho API to auto-create weekly tasks")* | `Research Zoho API for automatic weekly task creation [8.0 hrs]` |
+| `Meeting` | `Meeting – Sprint planning with client [1.0 hrs]` |
+
+## Descriptions (40–60 words)
+**Bad (3.5):** `Do php upgrade and testing.`
+
+**Good (9+):**
+> Upgrade the Site A and Site B sites from PHP 8.3.x to 8.5.12 after the Ubuntu OS upgrade, and move WordPress from 7.0.4 to 7.1.4. Review plugin and theme compatibility, take a backup first, and run smoke tests on both sites. Done when both sites load, forms submit and no PHP deprecation errors appear in logs.
+
+## Progress comments (25–60 words, with test evidence)
+**Bad (4.0):** `Done`
+**Bad (5.2):** `1. Setup DB - Done, 2. Update API - Done, 3. Testing - Done`
+**Bad (5.0, ≥3h task):** `UI done. API integration and tests pending for tomorrow.`
+
+**Good (9.8):**
+> Added `20261030_zoho_rls.sql` with role policies for analyst/admin and helper functions `current_tenant()` and `is_admin()`. Applied it on staging, fixed a policy recursion error, and confirmed 8 passing pgTAP cases including cross-tenant read denial.
+
+**Good with a blocker (not capped):**
+> Completed the dashboard layout and tested it on 3 viewports. API integration is blocked: staging credentials for the payments service have not been provided (requested from the client on Slack today). Will resume as soon as access is granted.
+
+**Overrun roadblock comment (write immediately, not at close):**
+> Running ~45 minutes over the 2h estimate: the migration fails on production-sized data because of a missing index on `orders.tenant_id`. Added the index in `0042_add_tenant_idx.sql`; re-running the migration now, expecting 20 more minutes.
+
+## QA Review hand-off comment
+> Self-tested on staging: ran 14 unit tests (all passing), manually checked empty-state and 500-error paths. Changed `invoice_service.py` and `routes/invoices.py`. Ready for QA Review; known limitation: PDF export for >500 rows is not covered.
+
+## Meetings
+Prefer a dedicated task `Meeting – <purpose> [X.X hrs]`. If time is logged in a technical task, add to the description: "Includes 1h client call on API scope" and comment what was decided ("Agreed to move pagination to cursor-based; client approves v2 payload").
+
+## Full create → update flow (dry-run first)
+1. User: "log my Site A upgrade, 4 hours, billable".
+2. Agent reads last created task → project *Research & Training 2025*, list *Task List 2026*, parent `<Name>: N hours` → asks to confirm.
+3. Agent drafts title/description, runs `lint_task.py --draft`, shows the payload.
+4. After "yes": create task (Backlog/In Progress). On finish: comment as above, log hours, status → **In QA Review**.
+
+
+---
+<!-- reference: creole-studios-zoho/references/scoring-rubric.md -->
+# Zoho Task Evaluation — scoring rubric (from the Creole Studios guide)
+
+Every task is scored 0.0–10.0 from Zoho data: description, comments, timelogs, status, planned vs logged time.
+The engine checks that comments genuinely substantiate the work described. It also adapts to experience level and
+subscribed AI tools (Cursor, Copilot, Claude Pro): expect tighter time expectations when AI tools are available.
+
+## Daily habits (what to do)
+1. **Clear descriptions** before starting: what is built, requirements, what "done" looks like. No empty or one-line ("update code") descriptions.
+2. **Meaningful technical comments** on update/close: files/modules changed, APIs/schemas touched, packages upgraded, errors resolved, how it was tested. Not "Done"/"Fixed"; not a pasted checklist with "- Done / - Pending".
+3. **Stay on planned time; escalate early.** Finish close to estimate. Finished early → write unit tests and check edge cases. Running long → comment the roadblock immediately.
+4. **Always move to "In QA Review"** after coding and self-testing, with self-testing notes. Leaving it In Progress/Backlog signals skipped verification.
+5. **Meetings:** log under a dedicated meeting task; if inside a technical task, mention the meeting in the description and explain what was discussed in comments.
+
+## Score bands and the 10 reference examples
+| # | Score | Situation | Why |
+|---|-------|-----------|-----|
+| 1 | 9.8 | Planned 4h, logged 4h, In QA Review; ~50-word description (PostgreSQL RLS setup, role policies, migration scripts); comment cites `20261030_zoho_rls.sql`, helper functions, 8 passing pgTAP tests | Zero deductions; concrete code + automated testing; QA gate passed |
+| 2 | 8.5 | Planned 4h, logged 6h, senior dev with Cursor | −1.5 time inflation (>35% over for senior with AI tools) |
+| 3 | 7.2 | Detailed 45-word multi-requirement description, comment is one line (10 words) | Scope-substantiation gap → 7.0–7.5 |
+| 4 | 6.2 | Good work, left In Progress | −1.0 flat status-gate deduction |
+| 5 | 5.2 | Comment copies checklist "1. Setup DB - Done…" | Capped at 5.2: mirrors checklist, no substance |
+| 6 | 5.0 | ≥3h ticket closed with core deliverables "pending" and no documented external blocker | Capped at 5.0 (partial delivery) |
+| 7 | 5.0 | Planned 2h, logged 3h30 (85 min past the +5 min grace) | −2.0 immediate cut + scaled penalty; time score 3.0 |
+| 8 | 4.0 | Comment is "Done"/"Fixed" (1–3 words) | No audit trail |
+| 9 | 3.5 | 5-word description, 5-word comment, 1h15 of 4h, left In Progress | −4.5 short description (≤6 words, no acceptance criteria), −2.0 insufficient explanation, −1.0 status |
+| 10 | 0.0 | 0h logged, or blank description / no comments | Flat zero |
+
+## Checklist to hit 9.0–10.0
+- [ ] Description ≥ 40 words with scope, technical specifics and acceptance criteria
+- [ ] Comment 25–60 words naming concrete artifacts (file/migration/endpoint/package) + test evidence (counts, commands)
+- [ ] Logged hours > 0 and within planned time + 5 minutes
+- [ ] No deliverable "pending" unless an external blocker is named
+- [ ] Status = **In QA Review** with self-testing notes
+- [ ] Meetings logged under a meeting task (or explained)
+
+
+(Helper scripts for this skill live in the repo at skills/creole-studios-zoho/scripts/.)
