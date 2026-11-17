@@ -105,3 +105,48 @@ def test_readonly_hides_and_blocks_writes(tmp_path):
                 assert res.isError and "read-only" in text(res)
                 assert calls(tmp_path) == [] or all(c["tool"] != "create_a_task" for c in calls(tmp_path))
     run(go())
+
+
+def test_add_comment_is_gated_and_maps_to_upstream_schema(tmp_path):
+    async def go():
+        async with stdio_client(server_params(tmp_path)) as (r, w):
+            async with ClientSession(r, w) as s:
+                await s.initialize()
+                st = json.loads(text(await s.call_tool("zs_status", {})))
+                assert st["zoho_connected"] and st["comment_tools"] == ["create_task_comment"]
+                args = {"task_id": "T1", "comment": "Implemented retry in `sync.py` and verified with 12 tests.",
+                        "org": "Creole Studios"}
+                prev = json.loads(text(await s.call_tool("zs_add_comment", args)))
+                assert prev["will_call"] == {"tool": "create_task_comment",
+                                             "arguments": {"task_id": "T1", "content": args["comment"]}}
+                assert prev["confirm_token"] and prev["lint"] is not None
+                assert [c["tool"] for c in calls(tmp_path)] == []  # preview forwarded nothing
+
+                bad = await s.call_tool("zs_add_comment", {**args, "comment": "edited", "confirm_token": prev["confirm_token"]})
+                assert bad.isError and "does not match" in text(bad)
+                ok = await s.call_tool("zs_add_comment", {**args, "confirm_token": prev["confirm_token"]})
+                assert not ok.isError and "commented" in text(ok)
+                done = calls(tmp_path)
+                assert len(done) == 1 and done[0]["args"]["content"] == args["comment"]
+                again = await s.call_tool("zs_add_comment", {**args, "confirm_token": prev["confirm_token"]})
+                assert again.isError and len(calls(tmp_path)) == 1
+    run(go())
+
+
+def test_add_comment_blocked_in_readonly_and_without_upstream(tmp_path):
+    async def go():
+        async with stdio_client(server_params(tmp_path, readonly=True)) as (r, w):
+            async with ClientSession(r, w) as s:
+                await s.initialize()
+                res = await s.call_tool("zs_add_comment", {"task_id": "T1", "comment": "x"})
+                assert res.isError and "read-only" in text(res)
+        p = server_params(tmp_path)
+        p.env.pop("ZOHO_SKILLS_UPSTREAM_CMD")
+        async with stdio_client(p) as (r, w):
+            async with ClientSession(r, w) as s:
+                await s.initialize()
+                st = json.loads(text(await s.call_tool("zs_status", {})))
+                assert not st["zoho_connected"] and "zoho-skills connect" in st["fix"]
+                res = await s.call_tool("zs_add_comment", {"task_id": "T1", "comment": "x"})
+                assert res.isError and "Nothing was written" in text(res)
+    run(go())

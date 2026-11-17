@@ -33,5 +33,12 @@ def update_a_task(task_id: str, status: str = "") -> str:
     return "updated"
 
 
+@mcp.tool()
+def create_task_comment(task_id: str, content: str, project_id: str = "") -> str:
+    """Add a comment to a task."""
+    _record("create_task_comment", {"task_id": task_id, "content": content, "project_id": project_id})
+    return "commented"
+
+
 if __name__ == "__main__":
     mcp.run("stdio")

@@ -33,6 +33,10 @@ Pin a release for production: `ZOHO_SKILLS_REF=v0.2.0 sh install.sh`. The old `c
                                    ~/.zoho-skills/config.json (0600: MCP URL)
 ```
 Org rules, lint and Zoho tools all arrive through that single entry (`zs_*` tools plus the proxied Zoho tools).
+Native tools: `zs_org_rules`, `zs_lint_task`, `zs_build_title`, `zs_draft_task`, `zs_last_context`,
+`zs_save_context`, `zs_status` (is Zoho connected? which gated tools exist) and `zs_add_comment` (gated task comment,
+linted against the org's comment rules). **Only the `zs_*` tools appear when the Zoho connection is down** — call
+`zs_status`, then `zoho-skills doctor` / `zoho-skills connect`.
 
 ## The write gate (what it does and does not do)
 Zoho tools that create or update data are not forwarded straight through. The agent first requests a preview; the
@@ -54,11 +58,14 @@ just the `zoho-skills mcp` launch command. Output masks the URL. Zoho auth/OAuth
 | `zoho-skills` / `onboard` | Guided wizard (default) |
 | `install` | Skills only, no MCP; non-interactive: `--yes --harness claude,cursor --global\|--project DIR [--dry-run]` |
 | `connect` | Only (re)set the Zoho MCP URL (stored in `~/.zoho-skills`); `--region in\|com\|eu\|com.au\|jp`, `--no-verify` |
+| `logout` | Forget the stored Zoho URL (harness entries and skills stay); `connect` logs back in |
+| `disconnect` | Remove the `zoho-skills` MCP entry from harnesses, keep skills; `--logout` also forgets the URL |
 | `mcp` | Run the stdio MCP server (what harnesses launch) |
 | `org add\|list\|update\|remove` | Manage org packs |
 | `doctor` | Check harnesses, skills, MCP entry, config permissions |
 | `lint` | Offline task lint + estimated score from the org's rules |
-| `update` / `uninstall` | Upgrade the tool / remove entries and installed skills |
+| `update` | Upgrade the tool, refresh org packs and re-copy installed skills (`--skills-only` skips the upgrade) |
+| `uninstall` | Remove entries and installed skills (`--purge` also deletes `~/.zoho-skills`) |
 
 Env: `ZOHO_SKILLS_REF`, `ZOHO_SKILLS_READONLY`, `ZOHO_SKILLS_URL` (overrides the stored URL), `ZOHO_SKILLS_HOME`.
 

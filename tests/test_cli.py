@@ -102,3 +102,34 @@ def test_versions_stay_in_sync_and_npm_bin_exists():
     pyproject = re.search(r'^version = "([^"]+)"', (REPO / "pyproject.toml").read_text(), re.M).group(1)
     assert pkg["version"] == plugin["version"] == pyproject
     assert (REPO / pkg["bin"]["zoho-skills"]).is_file()
+
+
+def test_logout_removes_only_the_url(tmp_path):
+    run("connect", "--yes", "--mcp-url", URL, "--no-verify", home=tmp_path)
+    cfg = tmp_path / ".zoho-skills/config.json"
+    assert run("logout", "--dry-run", home=tmp_path).returncode == 0 and "url" in json.loads(cfg.read_text())
+    r = run("logout", "--yes", home=tmp_path)
+    assert r.returncode == 0 and "logged out" in r.stdout and "SECRET" not in r.stdout
+    assert "url" not in json.loads(cfg.read_text()) and stat.S_IMODE(cfg.stat().st_mode) == 0o600
+    assert "not logged in" in run("logout", "--yes", home=tmp_path).stdout
+
+
+def test_disconnect_removes_entry_but_keeps_skills(tmp_path):
+    run("onboard", "--yes", "--harness", "codex", "--global", "--mcp-url", URL, "--no-verify", home=tmp_path)
+    toml = tmp_path / ".codex/config.toml"
+    assert "zoho-skills" in toml.read_text()
+    r = run("disconnect", "--yes", "--harness", "codex", "--logout", home=tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "zoho-skills" not in (toml.read_text() if toml.exists() else "")
+    assert (tmp_path / ".codex/skills" / CORE / "SKILL.md").is_file()
+    assert "url" not in json.loads((tmp_path / ".zoho-skills/config.json").read_text())
+
+
+def test_update_skills_only_refreshes_installed_skills(tmp_path):
+    run("install", "--yes", "--harness", "claude", "--global", home=tmp_path)
+    skill = tmp_path / ".claude/skills" / CORE / "SKILL.md"
+    skill.write_text("stale")
+    r = subprocess.run([sys.executable, "-c", "from zoho_skills import cli; raise SystemExit(cli.main(['update','--skills-only']))"],
+                       capture_output=True, text=True, env=dict(os.environ, HOME=str(tmp_path), PYTHONPATH=str(REPO / "src")))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "skills refreshed" in r.stdout and skill.read_text() != "stale"

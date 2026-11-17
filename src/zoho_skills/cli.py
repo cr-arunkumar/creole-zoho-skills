@@ -3,8 +3,10 @@
   zoho-skills                       guided onboarding (harnesses → scope → org packs → Zoho URL → review → install)
   zoho-skills mcp                   run the MCP server (stdio): org rules + write-gated Zoho proxy
   zoho-skills connect               (re)set the Zoho MCP URL
+  zoho-skills logout                forget the stored Zoho URL (log out of Zoho)
+  zoho-skills disconnect            remove the zoho-skills MCP entry from harnesses (keeps skills)
   zoho-skills org add|list|update|remove
-  zoho-skills install | lint | doctor | update | uninstall
+  zoho-skills install | lint | doctor | update | uninstall | list
 """
 from __future__ import annotations
 
@@ -30,7 +32,7 @@ HARNESS_INFO = {  # harness -> (label, executable to detect, config dir under $H
     "antigravity": ("Antigravity / Gemini CLI", "gemini", ".gemini"),
     "codex": ("Codex / Copilot (AGENTS.md)", "codex", ".codex"),
 }
-COMMANDS = ("onboard", "install", "connect", "mcp", "org", "lint", "doctor", "update", "uninstall", "list")
+COMMANDS = ("onboard", "install", "connect", "logout", "disconnect", "mcp", "org", "lint", "doctor", "update", "uninstall", "list")
 PROMPTED, SKIPPED = "prompted", "skipped"
 
 
@@ -479,13 +481,75 @@ def cmd_doctor(a: argparse.Namespace) -> int:
     return 1 if any(c.status == "fail" for c in checks) else 0
 
 
-def cmd_update(_: argparse.Namespace) -> int:
-    """Upgrade the installed tool. Installed with uv → `uv tool upgrade`; otherwise say how."""
-    uv = shutil.which("uv")
-    if uv and subprocess.run([uv, "tool", "list"], capture_output=True, text=True).stdout.count("zoho-skills"):
-        return subprocess.run([uv, "tool", "upgrade", "zoho-skills"]).returncode
-    print("Update with: npx zoho-skills@latest   (or re-run the curl installer from the README)")
-    return 1
+def cmd_logout(a: argparse.Namespace) -> int:
+    """Forget the stored Zoho URL (it is the credential). Harness entries and skills stay; the server then serves
+    org rules only until `zoho-skills connect`."""
+    cfg = config.load()
+    if not cfg.get("url"):
+        print("  not logged in — no Zoho URL stored" + (" (ZOHO_SKILLS_URL is set in your environment)"
+                                                       if os.environ.get("ZOHO_SKILLS_URL") else "."))
+        return 0
+    if a.dry_run:
+        print(f"  {S.dim('·')} would remove the stored Zoho URL from {config.config_path()}")
+        return 0
+    if not a.yes and tui.interactive() and not tui.confirm("Remove the stored Zoho URL?", default=True):
+        print("cancelled.")
+        return 1
+    cfg.pop("url")
+    config.save(cfg)
+    print(f"  {S.ok('✔')} logged out — Zoho URL removed. Reconnect any time: {S.bold('zoho-skills connect')}")
+    print(f"  {S.dim('Revoke the MCP server in the Zoho console (' + mcp_config.console_url(config.region()) + ') to invalidate the key itself.')}")
+    return 0
+
+
+def cmd_disconnect(a: argparse.Namespace) -> int:
+    """Remove the zoho-skills MCP entry from harnesses; skills stay installed. --logout also forgets the URL."""
+    from . import harnesses
+    home = Path.home()
+    targets = _split(a.harness, adapters.HARNESSES, "harness") if a.harness else adapters.HARNESSES
+    errors = 0
+    for h in targets:
+        try:
+            print(f"{S.ok('✔')} {HARNESS_INFO[h][0]} MCP — {harnesses.unregister(h, home=home, dry_run=a.dry_run)}")
+        except harnesses.HarnessError as e:
+            errors += 1
+            print(f"{S.err('✖')} {HARNESS_INFO[h][0]} MCP — {e}")
+    if a.logout:
+        cmd_logout(argparse.Namespace(yes=a.yes, dry_run=a.dry_run))
+    if not a.dry_run:
+        print(f"\n  Restart your harness. Re-add later with: {S.bold('zoho-skills onboard')}\n")
+    return 1 if errors else 0
+
+
+def _installed_global_harnesses(home: Path) -> list:
+    return [h for h, (_, glob) in adapters.SKILL_DIRS.items() if (home / glob / CORE).is_dir()]
+
+
+def cmd_update(a: argparse.Namespace) -> int:
+    """Upgrade the tool, refresh org packs and re-copy installed skills so they match the new version."""
+    before, home = version(), Path.home()
+    if not a.skills_only:
+        uv = shutil.which("uv")
+        if uv and subprocess.run([uv, "tool", "list"], capture_output=True, text=True).stdout.count("zoho-skills"):
+            if subprocess.run([uv, "tool", "upgrade", "zoho-skills"]).returncode != 0:
+                print(f"{S.err('✖')} upgrade failed (network?). Try: uv tool install --force "
+                      "git+https://github.com/cr-arunkumar/creole-zoho-skills")
+                return 1
+        else:
+            print("Not installed with uv here. Update with: npx --yes --prefer-online zoho-skills@latest   "
+                  "(or re-run the curl installer from the README)")
+            return 1
+    # after an upgrade run the freshly installed binary (this process is the old version); else this interpreter
+    exe = [shutil.which("zoho-skills")] if not a.skills_only and shutil.which("zoho-skills") else [sys.executable, "-m", "zoho_skills"]
+    after = subprocess.run([*exe, "--version"], capture_output=True, text=True).stdout.strip() or f"zoho-skills {before}"
+    print(f"{S.ok('✔')} {after}" + (S.dim(f"  (was {before})") if f"zoho-skills {before}" != after else S.dim("  (already latest)")))
+    for line in (subprocess.run([*exe, "org", "update"], capture_output=True, text=True).stdout.splitlines() if not a.skills_only else []):
+        print(f"  {line}")
+    for h in _installed_global_harnesses(home):
+        r = subprocess.run([*exe, "install", "--yes", "--harness", h, "--global"], capture_output=True, text=True)
+        print(f"{S.ok('✔') if r.returncode == 0 else S.err('✖')} {HARNESS_INFO[h][0]}: skills refreshed")
+    print(f"  {S.dim('Restart your harness to load the new MCP server.')}")
+    return 0
 
 
 def cmd_uninstall(a: argparse.Namespace) -> int:
@@ -549,6 +613,13 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--no-verify", action="store_true")
     c.add_argument("-y", "--yes", action="store_true")
     c.add_argument("--dry-run", action="store_true")
+    lo = sub.add_parser("logout", help="forget the stored Zoho URL")
+    dc = sub.add_parser("disconnect", help="remove the MCP entry from harnesses (keeps skills)")
+    dc.add_argument("--harness")
+    dc.add_argument("--logout", action="store_true", help="also forget the stored Zoho URL")
+    for x in (lo, dc):
+        x.add_argument("-y", "--yes", action="store_true")
+        x.add_argument("--dry-run", action="store_true")
     sub.add_parser("mcp", help="run the MCP server (stdio): org rules + gated Zoho proxy")
     o = sub.add_parser("org", help="manage org rule packs")
     osub = o.add_subparsers(dest="org_cmd", required=True)
@@ -566,7 +637,8 @@ def build_parser() -> argparse.ArgumentParser:
     ln.add_argument("--json", action="store_true")
     d = sub.add_parser("doctor", help="check uv/python, config, harness entries and Zoho reachability")
     d.add_argument("--offline", action="store_true", help="skip the read-only upstream check")
-    sub.add_parser("update", help="upgrade zoho-skills")
+    up = sub.add_parser("update", help="upgrade zoho-skills, org packs and installed skills")
+    up.add_argument("--skills-only", action="store_true", help="skip the upgrade; just refresh installed skills")
     u = sub.add_parser("uninstall", help="remove our MCP entries and installed skills")
     u.add_argument("--harness")
     u.add_argument("--project", metavar="DIR")
@@ -582,7 +654,8 @@ def main(argv: Optional[list] = None) -> int:
     if not argv or (argv[0] not in COMMANDS and argv[0] not in ("-h", "--help", "--version")):
         argv.insert(0, "onboard")
     a = build_parser().parse_args(argv)
-    handlers = {"onboard": cmd_onboard, "install": cmd_install, "connect": cmd_connect, "mcp": cmd_serve,
+    handlers = {"onboard": cmd_onboard, "install": cmd_install, "connect": cmd_connect, "logout": cmd_logout,
+                "disconnect": cmd_disconnect, "mcp": cmd_serve,
                 "org": cmd_org, "lint": cmd_lint, "doctor": cmd_doctor, "update": cmd_update,
                 "uninstall": cmd_uninstall, "list": cmd_list}
     try:
