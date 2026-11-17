@@ -24,7 +24,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # create the GitHub release
       id-token: write # npm provenance
     steps:
       - uses: actions/checkout@v4
@@ -78,3 +78,30 @@ jobs:
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
+
+      # npm may hold the release for a maintainer's approval (staged publishing) and then needs a few minutes to
+      # serve the tarball. Wait for it and smoke-test the real `npx` install so this run ends with "installable".
+      - name: Wait until installable, then smoke-test npx
+        timeout-minutes: 25
+        continue-on-error: true
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          url="https://registry.npmjs.org/${name}/-/${name}-${version}.tgz"
+          code=000
+          for _ in $(seq 1 90); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "$url")"
+            [ "$code" = 200 ] && break
+            echo "::notice::${name}@${version} not installable yet (HTTP ${code}) - waiting for npm approval/propagation"
+            sleep 15
+          done
+          [ "$code" = 200 ] || { echo "::warning::${name}@${version} is still not installable; approve it on npmjs.com"; exit 1; }
+          out="$(npx --yes --prefer-online "${name}@${version}" --version)"
+          echo "$out"
+          [ "$out" = "zoho-skills ${version}" ] || { echo "::error::unexpected version output: $out"; exit 1; }

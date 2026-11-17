@@ -91,6 +91,19 @@ and `skills/zoho-projects-core/references/org-skill-spec.md`.
 ## Uninstall
 `zoho-skills uninstall [--purge]`, then `uv tool uninstall zoho-skills`. Delete `~/.zoho-skills` to remove config and state.
 
+## Install without waiting for npm
+npm can hold a new release for the maintainer's approval and then needs a few minutes to serve it. These install the
+exact tag straight from GitHub, immediately:
+```bash
+npx github:cr-arunkumar/creole-zoho-skills#v0.2.5          # or: uvx --from git+https://github.com/cr-arunkumar/creole-zoho-skills@v0.2.5 zoho-skills
+curl -fsSL https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/main/install.sh | ZOHO_SKILLS_REF=v0.2.5 sh
+```
+
+## Release (maintainers)
+`scripts/release.sh X.Y.Z` bumps the three version files, runs the tests, commits, tags and pushes. The tag starts the
+`publish` workflow: npm publish with provenance, a GitHub release, then a wait-and-smoke-test of `npx zoho-skills@X.Y.Z`.
+The one manual step is npm's own approval gate (see below).
+
 ## Develop
 ```bash
 uv venv && uv pip install -e . pytest fastapi httpx

@@ -138,3 +138,9 @@ def test_update_skills_only_refreshes_installed_skills(tmp_path):
 def test_login_without_url_points_to_connect(tmp_path):
     r = run("login", home=tmp_path)
     assert r.returncode == 1 and "zoho-skills connect" in r.stdout
+
+
+def test_release_script_is_valid_sh_and_rejects_bad_versions():
+    script = str(REPO / "scripts" / "release.sh")
+    assert subprocess.run(["sh", "-n", script]).returncode == 0
+    assert subprocess.run(["sh", script, "nope"], capture_output=True).returncode != 0
