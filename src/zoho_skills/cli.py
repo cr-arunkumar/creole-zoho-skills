@@ -3,7 +3,8 @@
   zoho-skills                       guided onboarding (harnesses → scope → org packs → Zoho URL → review → install)
   zoho-skills mcp                   run the MCP server (stdio): org rules + write-gated Zoho proxy
   zoho-skills connect               (re)set the Zoho MCP URL
-  zoho-skills logout                forget the stored Zoho URL (log out of Zoho)
+  zoho-skills login                 sign in to Zoho (OAuth, browser) — required once after connect
+  zoho-skills logout                forget the stored Zoho URL and sign-in
   zoho-skills disconnect            remove the zoho-skills MCP entry from harnesses (keeps skills)
   zoho-skills org add|list|update|remove
   zoho-skills install | lint | doctor | update | uninstall | list
@@ -32,7 +33,7 @@ HARNESS_INFO = {  # harness -> (label, executable to detect, config dir under $H
     "antigravity": ("Antigravity / Gemini CLI", "gemini", ".gemini"),
     "codex": ("Codex / Copilot (AGENTS.md)", "codex", ".codex"),
 }
-COMMANDS = ("onboard", "install", "connect", "logout", "disconnect", "mcp", "org", "lint", "doctor", "update", "uninstall", "list")
+COMMANDS = ("onboard", "install", "connect", "login", "logout", "disconnect", "mcp", "org", "lint", "doctor", "update", "uninstall", "list")
 PROMPTED, SKIPPED = "prompted", "skipped"
 
 
@@ -184,14 +185,32 @@ def step_packs(st: State, step: str = "3/5") -> object:
     return SKIPPED
 
 
-def verify_url(url: str) -> tuple:
-    """Read-only reachability check (tools/list). Returns (ok, message) with secrets redacted."""
+def verify_url(url: str, *, offer_login: bool = False) -> tuple:
+    """Read-only reachability check (tools/list). Returns (ok, message) with secrets redacted. When Zoho asks for
+    sign-in and a human is at the terminal, offer the browser login right here."""
     from . import upstream
     try:
         tools = asyncio.run(asyncio.wait_for(upstream.list_tools_once(url), 20))
         return True, f"reachable — {len(tools)} tools (read-only check)"
     except Exception as e:  # noqa: BLE001 — any failure is reported, never raised
-        return False, config.redact(f"{type(e).__name__}: {e}")[:200]
+        msg = config.redact(upstream.describe_error(e))
+        if offer_login and upstream.is_auth_error(e):
+            print(f"{S.warn('!')} Zoho MCP: {msg}")
+            if tui.confirm("Sign in to Zoho in your browser now?", default=True):
+                ok, msg2 = run_login(url, None, True)
+                return ok, msg2
+        return False, msg
+
+
+def run_login(url: str, scopes: Optional[list], open_browser: bool) -> tuple:
+    """Browser OAuth sign-in. Returns (ok, message)."""
+    from . import auth, upstream
+    print(f"  {S.dim('Approving these Zoho permissions: ' + ', '.join(scopes or auth.DEFAULT_SCOPES))}")
+    try:
+        n = asyncio.run(auth.login(url, scopes=scopes, open_browser=open_browser, announce=lambda m: print(f"  {m}")))
+        return True, f"signed in — {n} tools (tokens stored owner-only in {auth.token_path()})"
+    except Exception as e:  # noqa: BLE001
+        return False, config.redact(upstream.describe_error(e))
 
 
 def guided_url(st: State, step: str) -> object:
@@ -251,7 +270,7 @@ def step_mcp(st: State, step: str = "4/5") -> object:
             print(f"{S.warn('!')} URL host does not look like the {st.region!r} data centre "
                   f"({mcp_config.REGIONS[st.region]}). Double-check the region.")
         if not a.no_verify:
-            ok, msg = verify_url(st.url)
+            ok, msg = verify_url(st.url, offer_login=st.tty)
             print(f"{S.ok('✔') if ok else S.warn('!')} Zoho MCP: {msg}")
             if not ok and st.tty and not tui.confirm("Save this URL anyway?", default=False):
                 st.url = None
@@ -337,7 +356,7 @@ def finish(st: State, errors: int) -> None:
     steps = []
     if st.url or config.get_url():
         steps.append("Restart your harness so it starts the " + S.bold("zoho-skills") + " MCP server")
-        steps.append("Authenticate in the Zoho prompt on first use " + S.dim("(Claude Code: /mcp)"))
+        steps.append(f"Signed in to Zoho? If not:  {S.bold('zoho-skills login')}")
     else:
         steps.append(f"Connect Zoho:  {S.bold('zoho-skills connect')}")
     steps.append("Try it (read-only): " + S.dim("“list my Zoho portals, then the latest 5 tasks”"))
@@ -407,7 +426,12 @@ def cmd_connect(a: argparse.Namespace) -> int:
         print(f"  {S.dim('·')} would save the URL to {config.config_path()}")
         return 0
     config.update(url=st.url, region=st.region)
-    print(f"\n  {S.ok('Done.')} URL saved (owner-only). Restart your harness to reconnect.\n")
+    from . import auth
+    print(f"\n  {S.ok('Done.')} URL saved (owner-only).")
+    if auth.is_logged_in(st.url):
+        print("  Restart your harness to reconnect.\n")
+    else:
+        print(f"  Next: {S.bold('zoho-skills login')} {S.dim('(Zoho needs a one-time browser sign-in)')}\n")
     return 0
 
 
@@ -481,23 +505,42 @@ def cmd_doctor(a: argparse.Namespace) -> int:
     return 1 if any(c.status == "fail" for c in checks) else 0
 
 
+def cmd_login(a: argparse.Namespace) -> int:
+    """Sign in to Zoho (OAuth, in the browser). Needed once; tokens refresh automatically afterwards."""
+    from . import auth
+    url = config.get_url()
+    if not url:
+        print(f"  No Zoho MCP URL yet. Create one at {mcp_config.console_url(config.region())}, then: "
+              "zoho-skills connect")
+        return 1
+    scopes = a.scopes.split(",") if a.scopes else None
+    ok, msg = run_login(url, scopes, not a.no_browser)
+    print(f"  {S.ok('✔') if ok else S.err('✖')} {msg}")
+    if ok:
+        print(f"  {S.dim('Restart your harness so it picks up the session.')}")
+    return 0 if ok else 1
+
+
 def cmd_logout(a: argparse.Namespace) -> int:
     """Forget the stored Zoho URL (it is the credential). Harness entries and skills stay; the server then serves
     org rules only until `zoho-skills connect`."""
+    from . import auth
     cfg = config.load()
-    if not cfg.get("url"):
+    if not cfg.get("url") and not auth.token_path().exists():
         print("  not logged in — no Zoho URL stored" + (" (ZOHO_SKILLS_URL is set in your environment)"
                                                        if os.environ.get("ZOHO_SKILLS_URL") else "."))
         return 0
     if a.dry_run:
-        print(f"  {S.dim('·')} would remove the stored Zoho URL from {config.config_path()}")
+        print(f"  {S.dim('·')} would remove the stored Zoho URL and sign-in tokens")
         return 0
-    if not a.yes and tui.interactive() and not tui.confirm("Remove the stored Zoho URL?", default=True):
+    if not a.yes and tui.interactive() and not tui.confirm("Remove the stored Zoho URL and sign-in tokens?", default=True):
         print("cancelled.")
         return 1
-    cfg.pop("url")
-    config.save(cfg)
-    print(f"  {S.ok('✔')} logged out — Zoho URL removed. Reconnect any time: {S.bold('zoho-skills connect')}")
+    cfg.pop("url", None)
+    if config.config_path().exists():
+        config.save(cfg)
+    auth.logout()
+    print(f"  {S.ok('✔')} logged out — Zoho URL and sign-in tokens removed. Reconnect any time: {S.bold('zoho-skills connect')}")
     print(f"  {S.dim('Revoke the MCP server in the Zoho console (' + mcp_config.console_url(config.region()) + ') to invalidate the key itself.')}")
     return 0
 
@@ -613,7 +656,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--no-verify", action="store_true")
     c.add_argument("-y", "--yes", action="store_true")
     c.add_argument("--dry-run", action="store_true")
-    lo = sub.add_parser("logout", help="forget the stored Zoho URL")
+    li = sub.add_parser("login", help="sign in to Zoho (OAuth in your browser)")
+    li.add_argument("--scopes", help="comma list of OAuth scopes (default: least-privilege set, no deletes)")
+    li.add_argument("--no-browser", action="store_true", help="print the authorisation URL instead of opening it")
+    lo = sub.add_parser("logout", help="forget the stored Zoho URL and sign-in")
     dc = sub.add_parser("disconnect", help="remove the MCP entry from harnesses (keeps skills)")
     dc.add_argument("--harness")
     dc.add_argument("--logout", action="store_true", help="also forget the stored Zoho URL")
@@ -654,7 +700,7 @@ def main(argv: Optional[list] = None) -> int:
     if not argv or (argv[0] not in COMMANDS and argv[0] not in ("-h", "--help", "--version")):
         argv.insert(0, "onboard")
     a = build_parser().parse_args(argv)
-    handlers = {"onboard": cmd_onboard, "install": cmd_install, "connect": cmd_connect, "logout": cmd_logout,
+    handlers = {"onboard": cmd_onboard, "install": cmd_install, "connect": cmd_connect, "login": cmd_login, "logout": cmd_logout,
                 "disconnect": cmd_disconnect, "mcp": cmd_serve,
                 "org": cmd_org, "lint": cmd_lint, "doctor": cmd_doctor, "update": cmd_update,
                 "uninstall": cmd_uninstall, "list": cmd_list}

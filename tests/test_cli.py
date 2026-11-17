@@ -133,3 +133,8 @@ def test_update_skills_only_refreshes_installed_skills(tmp_path):
                        capture_output=True, text=True, env=dict(os.environ, HOME=str(tmp_path), PYTHONPATH=str(REPO / "src")))
     assert r.returncode == 0, r.stdout + r.stderr
     assert "skills refreshed" in r.stdout and skill.read_text() != "stale"
+
+
+def test_login_without_url_points_to_connect(tmp_path):
+    r = run("login", home=tmp_path)
+    assert r.returncode == 1 and "zoho-skills connect" in r.stdout

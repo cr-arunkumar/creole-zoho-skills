@@ -178,7 +178,7 @@ def make_server(*, url: Optional[str] = None, command: Optional[list] = None, re
                     yield ctx
                     return
             except Exception as e:  # keep serving native tools; report on forwarded calls
-                ctx.error = config.redact(f"upstream unavailable: {e}")
+                ctx.error = config.redact(f"upstream unavailable: {upstream.describe_error(e)}")
                 print(ctx.error, file=sys.stderr)
         else:
             ctx.error = "no Zoho MCP URL configured (run: zoho-skills onboard)"

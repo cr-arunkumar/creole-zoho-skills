@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zoho-skills"
-version = "0.2.2"
+version = "0.2.3"
 description = "Zoho Projects automation for AI agents: org rule packs + a gated MCP proxy, with a guided multi-harness installer."
 readme = "README.md"
 license = { text = "MIT" }

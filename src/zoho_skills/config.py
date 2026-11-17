@@ -85,4 +85,5 @@ def redact(text: str) -> str:
     url = get_url()
     if url:
         text = text.replace(url, mcp_config.mask_url(url))
+    text = re.sub(r"/[0-9a-fA-F]{24,}(?=[/?\s\"']|$)", "/***", text)  # key embedded in the URL path
     return re.sub(r"([?&](?:key|token|apikey|api_key|access_token)=)[^&\s\"']+", r"\1***", text, flags=re.I)

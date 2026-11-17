@@ -48,8 +48,13 @@ token in one turn. The safety model is layered: the gate (no unreviewed, altered
 own tool-approval prompt (keep it on for the write tools), and the skill instructions telling the model to show the
 preview and wait for your confirmation. Treat the gate as a guard rail, not an authorisation system.
 
+## Signing in to Zoho
+The MCP URL alone is not a credential: Zoho's endpoint answers `401` + an OAuth challenge. After `connect`, run
+`zoho-skills login` once; it opens your browser, you approve the listed permissions, and the proxy stores and refreshes
+the tokens. If Zoho tools are missing, `zs_status` / `zoho-skills doctor` say `sign-in required` and the fix.
+
 ## Where secrets live
-Only in `~/.zoho-skills/config.json` (mode 0600): the Zoho MCP URL, which may embed a key. Harness configs contain
+In `~/.zoho-skills/` (mode 0600): `config.json` (the Zoho MCP URL, which may embed a key) and `oauth.json` (OAuth tokens, bound to that URL). Harness configs contain
 just the `zoho-skills mcp` launch command. Output masks the URL. Zoho auth/OAuth is handled by Zoho; nothing in this repo.
 
 ## Commands
@@ -58,7 +63,8 @@ just the `zoho-skills mcp` launch command. Output masks the URL. Zoho auth/OAuth
 | `zoho-skills` / `onboard` | Guided wizard (default) |
 | `install` | Skills only, no MCP; non-interactive: `--yes --harness claude,cursor --global\|--project DIR [--dry-run]` |
 | `connect` | Only (re)set the Zoho MCP URL (stored in `~/.zoho-skills`); `--region in\|com\|eu\|com.au\|jp`, `--no-verify` |
-| `logout` | Forget the stored Zoho URL (harness entries and skills stay); `connect` logs back in |
+| `login` | Sign in to Zoho (OAuth in your browser; once). `--scopes a,b`, `--no-browser`. Least-privilege scopes by default (no deletes) |
+| `logout` | Forget the stored Zoho URL and sign-in tokens (harness entries and skills stay) |
 | `disconnect` | Remove the `zoho-skills` MCP entry from harnesses, keep skills; `--logout` also forgets the URL |
 | `mcp` | Run the stdio MCP server (what harnesses launch) |
 | `org add\|list\|update\|remove` | Manage org packs |

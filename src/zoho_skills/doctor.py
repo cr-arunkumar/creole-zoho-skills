@@ -135,9 +135,10 @@ def _check_upstream(url: Optional[str], enabled: bool) -> Check:
         return Check("upstream", "fail", f"no response within {UPSTREAM_TIMEOUT}s",
                      "check network access and that the Zoho MCP server is enabled")
     except Exception as e:
-        msg = _scrub(f"{type(e).__name__}: {e}")[:300]
-        return Check("upstream", "fail", f"could not list tools ({msg})",
-                     "check the MCP URL and region; zoho-skills onboard to re-enter it")
+        msg = _scrub(upstream.describe_error(e))
+        fix = ("zoho-skills login" if upstream.is_auth_error(e)
+               else "check the MCP URL and region; zoho-skills connect to re-enter it")
+        return Check("upstream", "fail", msg, fix)
     names = {getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else None) for t in tools}
     missing = [t for t in mcp_config.REQUIRED_TOOLS if t not in names]
     detail = f"reachable; {len(tools)} tools (read-only tools/list, nothing was changed)"
