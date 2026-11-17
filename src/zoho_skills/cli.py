@@ -83,6 +83,7 @@ class State:
     global_scope: bool = True
     url: Optional[str] = None
     region: str = mcp_config.DEFAULT_REGION
+    scopes: Optional[list] = None   # Zoho permissions chosen for the post-install sign-in
 
     @property
     def base(self) -> Path:
@@ -122,7 +123,7 @@ def step_skills(st: State) -> object:
     return res
 
 
-def step_harnesses(st: State, step: str = "1/5") -> object:
+def step_harnesses(st: State, step: str = "1/6") -> object:
     detected = detect_harnesses(st.home)
     if st.args.harness:
         st.harnesses = _split(st.args.harness, adapters.HARNESSES, "harness")
@@ -139,7 +140,7 @@ def step_harnesses(st: State, step: str = "1/5") -> object:
     return SKIPPED
 
 
-def step_scope(st: State, step: str = "2/5") -> object:
+def step_scope(st: State, step: str = "2/6") -> object:
     a = st.args
     if a.project:
         st.project, st.global_scope = Path(a.project).expanduser().resolve(), False
@@ -163,7 +164,7 @@ def step_scope(st: State, step: str = "2/5") -> object:
     return PROMPTED
 
 
-def step_packs(st: State, step: str = "3/5") -> object:
+def step_packs(st: State, step: str = "3/6") -> object:
     available = packs.discover()
     slugs = [p.slug for p in available]
     if st.args.packs:
@@ -185,22 +186,17 @@ def step_packs(st: State, step: str = "3/5") -> object:
     return SKIPPED
 
 
-def verify_url(url: str, *, offer_login: bool = False) -> tuple:
-    """Read-only reachability check (tools/list). Returns (ok, message) with secrets redacted. When Zoho asks for
-    sign-in and a human is at the terminal, offer the browser login right here."""
+def verify_url(url: str) -> tuple:
+    """Read-only reachability check (tools/list). Returns (ok, message) with secrets redacted. A 401 sign-in challenge
+    means the server is there; the access picker and browser sign-in follow in the next step."""
     from . import upstream
     try:
         tools = asyncio.run(asyncio.wait_for(upstream.list_tools_once(url), 20))
         return True, f"reachable — {len(tools)} tools (read-only check)"
     except Exception as e:  # noqa: BLE001 — any failure is reported, never raised
-        msg = config.redact(upstream.describe_error(e))
-        if offer_login and upstream.is_auth_error(e):
-            print(f"{S.warn('!')} Zoho MCP: {msg}")
-            if tui.confirm("Sign in to Zoho in your browser now?", default=True):
-                scopes = pick_scopes(url) if tui.interactive() else None
-                ok, msg2 = run_login(url, scopes, True)
-                return ok, msg2
-        return False, msg
+        if upstream.is_auth_error(e):
+            return True, "reachable — Zoho asks you to sign in (you'll choose access and sign in next)"
+        return False, config.redact(upstream.describe_error(e))
 
 
 def run_login(url: str, scopes: Optional[list], open_browser: bool) -> tuple:
@@ -247,7 +243,7 @@ def guided_url(st: State, step: str) -> object:
                     summary=lambda v: mcp_config.mask_url(v) if v else "skipped")
 
 
-def step_mcp(st: State, step: str = "4/5") -> object:
+def step_mcp(st: State, step: str = "4/6") -> object:
     a = st.args
     if a.no_mcp:
         return SKIPPED
@@ -271,12 +267,26 @@ def step_mcp(st: State, step: str = "4/5") -> object:
             print(f"{S.warn('!')} URL host does not look like the {st.region!r} data centre "
                   f"({mcp_config.REGIONS[st.region]}). Double-check the region.")
         if not a.no_verify:
-            ok, msg = verify_url(st.url, offer_login=st.tty)
+            ok, msg = verify_url(st.url)
             print(f"{S.ok('✔') if ok else S.warn('!')} Zoho MCP: {msg}")
             if not ok and st.tty and not tui.confirm("Save this URL anyway?", default=False):
                 st.url = None
                 return step_mcp(st, step)
     return res
+
+
+def step_access(st: State, step: str = "5/6") -> object:
+    """Choose which Zoho services/permissions to grant — before the browser sign-in that follows the install."""
+    from . import auth
+    url = st.url or (None if st.args.no_mcp else config.get_url())
+    if not url or not st.tty:
+        return SKIPPED
+    if auth.is_logged_in(url) and not st.url:
+        if not tui.confirm("Already signed in to Zoho. Change the access you granted?", default=False):
+            return SKIPPED
+    tui.info(S.bold("Zoho access") + S.dim(f"  {step} · you approve this in the browser after the install"))
+    st.scopes = pick_scopes(url, numbered=False) or None
+    return PROMPTED if st.scopes else SKIPPED
 
 
 def plan_rows(st: State) -> list:
@@ -285,7 +295,9 @@ def plan_rows(st: State) -> list:
             ("Scope", f"global · {st.home}" if st.global_scope else f"project · {st.project}"),
             ("MCP", ("one entry `zoho-skills mcp` per harness · Zoho " + mcp_config.mask_url(st.url))
              if st.url else ("one entry `zoho-skills mcp` per harness"
-                             if not st.args.no_mcp else "skipped"))]
+                             if not st.args.no_mcp else "skipped")),
+            *([("Zoho login", f"{len(st.scopes)} permission(s) requested · browser sign-in after install")]
+              if st.scopes else [])]
 
 
 def step_review(st: State) -> object:
@@ -294,7 +306,7 @@ def step_review(st: State) -> object:
     tui.box([f"{S.dim(k.ljust(10))} {v}" for k, v in plan_rows(st)], title="Review")
     pick = tui.choose("Ready?", [("go", "Install now", ""), ("back", "Go back and change something", ""),
                                  ("cancel", "Cancel", "nothing will be written")],
-                      multi=False, can_back=True, step="5/5",
+                      multi=False, can_back=True, step="6/6",
                       summary=lambda r: {"go": "installing", "back": "back", "cancel": "cancelled"}[r])
     if pick is BACK or pick == "back":
         return BACK
@@ -357,7 +369,9 @@ def finish(st: State, errors: int) -> None:
     steps = []
     if st.url or config.get_url():
         steps.append("Restart your harness so it starts the " + S.bold("zoho-skills") + " MCP server")
-        steps.append(f"Signed in to Zoho? If not:  {S.bold('zoho-skills login')}")
+        from . import auth
+        if not auth.is_logged_in(st.url or config.get_url()):
+            steps.append(f"Sign in to Zoho:  {S.bold('zoho-skills login')}")
     else:
         steps.append(f"Connect Zoho:  {S.bold('zoho-skills connect')}")
     steps.append("Try it (read-only): " + S.dim("“list my Zoho portals, then the latest 5 tasks”"))
@@ -380,8 +394,18 @@ def _flow(a: argparse.Namespace, steps: list) -> tuple:
     return st
 
 
+def sign_in_after(st: State) -> None:
+    """Run the browser sign-in with the permissions chosen in the access step (interactive runs only)."""
+    url = st.url or config.get_url()
+    if not (st.scopes and url):
+        return
+    ok, msg = run_login(url, st.scopes, True)
+    print(f"{S.ok('✔') if ok else S.warn('!')} Zoho sign-in — {msg}"
+          + ("" if ok else f"\n  {S.dim('retry any time: zoho-skills login')}"))
+
+
 def cmd_onboard(a: argparse.Namespace) -> int:
-    st = _flow(a, [step_harnesses, step_scope, step_packs, step_mcp, step_review])
+    st = _flow(a, [step_harnesses, step_scope, step_packs, step_mcp, step_access, step_review])
     install_skills(st, a.dry_run)
     errors = 0
     if not a.no_mcp:
@@ -396,6 +420,7 @@ def cmd_onboard(a: argparse.Namespace) -> int:
     if a.dry_run:
         print(f"\n  {S.dim('dry run — nothing was written.')}")
         return 0
+    sign_in_after(st)
     finish(st, errors)
     return 1 if errors else 0
 
@@ -418,7 +443,7 @@ def cmd_connect(a: argparse.Namespace) -> int:
     st = State(a, Path.home(), tty=tui.interactive() and not a.yes)
     if st.tty:
         tui.banner(version())
-    run_wizard([lambda s: step_mcp(s, "1/1")], st)
+    run_wizard([lambda s: step_mcp(s, "1/2"), lambda s: step_access(s, "2/2")], st)
     if not st.url:
         print(f"  Create your MCP server at {mcp_config.console_url(a.region or config.region())} "
               "(Connect tab → copy URL), then run: zoho-skills connect --mcp-url <url>")
@@ -429,6 +454,7 @@ def cmd_connect(a: argparse.Namespace) -> int:
     config.update(url=st.url, region=st.region)
     from . import auth
     print(f"\n  {S.ok('Done.')} URL saved (owner-only).")
+    sign_in_after(st)
     if auth.is_logged_in(st.url):
         print("  Restart your harness to reconnect.\n")
     else:
@@ -506,7 +532,7 @@ def cmd_doctor(a: argparse.Namespace) -> int:
     return 1 if any(c.status == "fail" for c in checks) else 0
 
 
-def pick_scopes(url: str) -> object:
+def pick_scopes(url: str, numbered: bool = True) -> object:
     """Interactive access picker: which Zoho services, at what level. Returns a scope list or BACK/None on cancel."""
     from . import auth
     with tui.Spinner("Reading the permissions your Zoho MCP server offers") as sp:
@@ -516,12 +542,12 @@ def pick_scopes(url: str) -> object:
     rows = [(k, auth.service_label(k), f"{len(v)} permission(s): " + ", ".join(sorted({auth.split_scope(x)[1] for x in v}))[:90])
             for k, v in svcs.items()]
     chosen = tui.choose("Which Zoho services may zoho-skills use?", rows, multi=True,
-                        selected=[k for k in svcs if k == "zohoprojects"], can_back=False, step="1/2",
+                        selected=[k for k in svcs if k == "zohoprojects"], can_back=False, step="1/2" if numbered else "",
                         summary=lambda ks: ", ".join(auth.service_label(k) for k in ks) or "none")
     if not chosen:
         return None
     level = tui.choose("Access level", [(k, v[0], v[1]) for k, v in auth.LEVELS.items()], multi=False,
-                       default_index=1, can_back=False, step="2/2", summary=lambda k: auth.LEVELS[k][0])
+                       default_index=1, can_back=False, step="2/2" if numbered else "", summary=lambda k: auth.LEVELS[k][0])
     scopes = auth.select(offered, chosen, "standard" if level == "custom" else level)
     if level == "custom":
         pool = [sc for sc in offered if auth.split_scope(sc)[0] in chosen and not auth.is_core(sc)]
