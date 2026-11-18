@@ -4,6 +4,17 @@ Zoho Projects automation for AI coding agents: **org rule packs** (title, descri
 logging, scoring) plus a **gated MCP proxy** in front of Zoho, installed into Claude Code, Cursor, Antigravity / Gemini
 CLI and Codex with one guided command. Creole Studios' rules are bundled (public) as the first pack.
 
+[![npm](https://img.shields.io/npm/v/zoho-skills?logo=npm)](https://www.npmjs.com/package/zoho-skills)
+[![CI](https://github.com/cr-arunkumar/creole-zoho-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/cr-arunkumar/creole-zoho-skills/actions/workflows/ci.yml)
+
+## Links
+| | |
+|---|---|
+| npm package | <https://www.npmjs.com/package/zoho-skills> — `npx zoho-skills@latest` |
+| Source / issues / releases | <https://github.com/cr-arunkumar/creole-zoho-skills> · [issues](https://github.com/cr-arunkumar/creole-zoho-skills/issues) · [releases](https://github.com/cr-arunkumar/creole-zoho-skills/releases) |
+| One-line installer | <https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/main/install.sh> |
+| Zoho MCP console (create your MCP URL) | India <https://mcp.zoho.in/> · US <https://mcp.zoho.com/> · EU <https://mcp.zoho.eu/> · AU <https://mcp.zoho.com.au/> · JP <https://mcp.zoho.jp/> |
+
 ## Install
 ```bash
 npx zoho-skills@latest
@@ -49,12 +60,26 @@ own tool-approval prompt (keep it on for the write tools), and the skill instruc
 preview and wait for your confirmation. Treat the gate as a guard rail, not an authorisation system.
 
 ## Signing in to Zoho
-The MCP URL alone is not a credential: Zoho's endpoint answers `401` + an OAuth challenge. After `connect`, run
-`zoho-skills login` once; it opens your browser, you approve the listed permissions, and the proxy stores and refreshes
-the tokens. You choose what zoho-skills may touch: the services your MCP server offers (the list comes from the server,
-so e.g. Mail appears only if you added it in the Zoho MCP console) and an access level — **read only**,
-**read + work items** (default: create/update tasks, time logs, bugs; no deletes) or **everything**. The Zoho MCP
-console's own tool selection still caps what can ever run. If Zoho tools are missing, `zs_status` / `zoho-skills doctor` say `sign-in required` and the fix.
+The MCP URL alone is not a credential: Zoho's endpoint answers `401` + an OAuth challenge. Onboarding (and `connect`)
+asks **which Zoho services** and **what access level** to grant, then runs the sign-in; `zoho-skills login` repeats it
+any time. What happens:
+
+1. You pick services (the list comes from your MCP server, so e.g. Mail appears only if you added it in the Zoho MCP
+   console) and a level: **read only**, **read + work items** (default: create/update tasks, time logs, bugs; no
+   deletes) or **everything**, or custom. The Zoho MCP console's own tool selection still caps what can ever run.
+2. The CLI opens Zoho's consent page in your browser and **waits** (up to 5 minutes, Ctrl+C cancels).
+3. After you approve, Zoho redirects the browser to a one-shot listener on `127.0.0.1` in this terminal session. The
+   page says "Signed in. You can close this tab", and the CLI **continues on its own**: "Approved in Zoho — collecting
+   your access token…" → token exchange → a read-only `tools/list` check → "signed in".
+4. **No localhost access** (SSH session, container, remote desktop)? While the CLI waits you can instead paste the
+   final page's full address (`http://127.0.0.1:PORT/callback?code=…&state=…`) into the terminal and press Enter.
+   `--no-browser` prints the consent URL instead of opening it.
+5. **State it updates:** `~/.zoho-skills/oauth.json` (tokens, owner-only, bound to your MCP URL) and a
+   `signin` entry in `~/.zoho-skills/config.json` (time + permissions granted, no secrets). Harness configs don't change:
+   the running `zoho-skills mcp` proxy reads the token and refreshes it itself. `zoho-skills doctor` shows the status;
+   `zoho-skills logout` removes the tokens and the URL. Restart your harness once after the first sign-in.
+
+If Zoho tools are missing, `zs_status` / `zoho-skills doctor` say `sign-in required` and the fix.
 
 ## Where secrets live
 In `~/.zoho-skills/` (mode 0600): `config.json` (the Zoho MCP URL, which may embed a key) and `oauth.json` (OAuth tokens, bound to that URL). Harness configs contain
@@ -76,7 +101,8 @@ just the `zoho-skills mcp` launch command. Output masks the URL. Zoho auth/OAuth
 | `update` | Upgrade the tool, refresh org packs and re-copy installed skills (`--skills-only` skips the upgrade) |
 | `uninstall` | Remove entries and installed skills (`--purge` also deletes `~/.zoho-skills`) |
 
-Env: `ZOHO_SKILLS_REF`, `ZOHO_SKILLS_READONLY`, `ZOHO_SKILLS_URL` (overrides the stored URL), `ZOHO_SKILLS_HOME`.
+Env: `ZOHO_SKILLS_REF` (installer: git ref), `ZOHO_SKILLS_READONLY=1` (block all writes), `ZOHO_SKILLS_URL` (overrides the
+stored URL), `ZOHO_SKILLS_HOME` (config/token directory, default `~/.zoho-skills`), `ZOHO_SKILLS_ORG` (default org pack).
 
 ## Add an org pack
 ```bash

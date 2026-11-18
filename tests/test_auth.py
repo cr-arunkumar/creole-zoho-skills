@@ -91,3 +91,12 @@ def test_fetch_supported_scopes_falls_back_offline(monkeypatch):
         raise httpx.ConnectError("offline")
     monkeypatch.setattr(httpx, "get", boom)
     assert auth.fetch_supported_scopes(URL) == auth.KNOWN_SCOPES
+
+
+def test_parse_pasted_accepts_full_redirect_url_or_query_only():
+    assert auth.parse_pasted("http://127.0.0.1:5555/callback?code=abc&state=S1") == ("abc", "S1")
+    assert auth.parse_pasted("  ?code=abc&state=S1 ") == ("abc", "S1")
+    with pytest.raises(ValueError):
+        auth.parse_pasted("https://example.com/nothing")
+    with pytest.raises(auth.AuthRequired):
+        auth.parse_pasted("http://127.0.0.1:1/callback?error=access_denied")

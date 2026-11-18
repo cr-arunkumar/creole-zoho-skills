@@ -211,6 +211,41 @@ def parse_callback(request_target: str) -> tuple:
     return q["code"][0], (q.get("state") or [None])[0]
 
 
+def parse_pasted(text: str) -> tuple:
+    """(code, state) from what the user pasted: the full redirect URL from the browser's address bar."""
+    text = text.strip()
+    if "code=" not in text and "error=" not in text:
+        raise ValueError("paste the full address of the page you were sent to (it contains ?code=…&state=…)")
+    u = urlparse(text if "://" in text else "http://x" + (text if text.startswith("/") else "/callback?" + text.lstrip("?")))
+    return parse_callback(f"/callback?{u.query}")
+
+
+class PasteListener:
+    """Fallback when the browser can't reach this machine's localhost (SSH, container, remote desktop): read the
+    redirect URL from the terminal. A daemon thread, so it never blocks interpreter exit."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.fut: asyncio.Future = loop.create_future()
+        import threading
+        threading.Thread(target=self._read, args=(loop,), daemon=True).start()
+
+    def _read(self, loop) -> None:
+        while not self.fut.done():
+            try:
+                line = input()
+            except EOFError:
+                return
+            if not line.strip():
+                continue
+            try:
+                result = parse_pasted(line)
+            except (ValueError, AuthRequired) as e:
+                print(f"  {e}")
+                continue
+            loop.call_soon_threadsafe(lambda r=result: self.fut.done() or self.fut.set_result(r))
+            return
+
+
 class CallbackServer:
     """One-shot localhost listener that receives the OAuth redirect."""
 
@@ -256,8 +291,9 @@ class CallbackServer:
 
 
 async def login(url: str, *, scopes: Optional[list] = None, open_browser: bool = True,
-                announce: Callable[[str], None] = print, timeout: float = 300) -> int:
-    """Interactive OAuth sign-in. Returns the number of Zoho tools visible afterwards (read-only tools/list)."""
+                announce: Callable[[str], None] = print, timeout: float = 300, allow_paste: bool = False) -> int:
+    """Interactive OAuth sign-in. Waits for Zoho's redirect back to a localhost listener (or, with allow_paste, a URL
+    pasted into the terminal), exchanges the code for tokens and returns how many Zoho tools are then visible."""
     from . import upstream  # lazy: upstream imports this module
     srv = CallbackServer()
     port = await srv.start()
@@ -273,7 +309,17 @@ async def login(url: str, *, scopes: Optional[list] = None, open_browser: bool =
                  + ("" if opened else f"\n  {auth_url}"))
 
     async def callback_handler() -> tuple:
-        return await srv.wait(timeout)
+        announce(f"Waiting for you to approve in the browser (up to {int(timeout // 60)} min, Ctrl+C to cancel)…")
+        waiters = [asyncio.ensure_future(srv.wait(timeout))]
+        if allow_paste:
+            announce("Different machine than your browser? Paste the final page's full address here and press Enter:")
+            waiters.append(PasteListener(asyncio.get_running_loop()).fut)
+        done, pending = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+        for w in pending:
+            w.cancel()
+        result = done.pop().result()
+        announce("Approved in Zoho — collecting your access token…")
+        return result
 
     provider = OAuthClientProvider(url, _metadata(f"http://127.0.0.1:{port}/callback", scopes or DEFAULT_SCOPES),
                                    storage, redirect_handler, callback_handler, timeout)

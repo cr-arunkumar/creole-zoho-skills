@@ -69,6 +69,15 @@ def _check_config() -> list:
         checks.append(Check("MCP URL", "warn", "not configured", "zoho-skills onboard"))
         return checks
     checks.append(Check("MCP URL", "ok", f"set ({config.redact(url)})"))
+    from . import auth
+    info = config.load().get("signin") or {}
+    if auth.is_logged_in(url):
+        n = len(info.get("scopes") or [])
+        checks.append(Check("zoho sign-in", "ok", "signed in" + (f" · {n} permission(s) granted" if n else "")
+                            + (f" · since {info['at']}" if info.get("at") else "")))
+    else:
+        checks.append(Check("zoho sign-in", "warn", "not signed in (Zoho needs a one-time browser approval)",
+                            "zoho-skills login"))
     region = config.region()
     if config.host_matches_region(url, region):
         checks.append(Check("region", "ok", region))

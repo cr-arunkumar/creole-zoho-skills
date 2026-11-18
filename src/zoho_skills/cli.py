@@ -200,14 +200,20 @@ def verify_url(url: str) -> tuple:
 
 
 def run_login(url: str, scopes: Optional[list], open_browser: bool) -> tuple:
-    """Browser OAuth sign-in. Returns (ok, message)."""
+    """Browser OAuth sign-in: opens Zoho's consent page, waits for the redirect back to this terminal, stores the
+    token and records what was granted. Returns (ok, message)."""
+    import datetime
     from . import auth, upstream
-    print(f"  {S.dim('Approving these Zoho permissions: ' + ', '.join(scopes or auth.DEFAULT_SCOPES))}")
+    scopes = scopes or auth.DEFAULT_SCOPES
+    print(f"  {S.dim('Requesting ' + str(len(scopes)) + ' Zoho permission(s): ' + ', '.join(scopes))}")
     try:
-        n = asyncio.run(auth.login(url, scopes=scopes, open_browser=open_browser, announce=lambda m: print(f"  {m}")))
-        return True, f"signed in — {n} tools (tokens stored owner-only in {auth.token_path()})"
+        n = asyncio.run(auth.login(url, scopes=scopes, open_browser=open_browser, allow_paste=sys.stdin.isatty(),
+                                   announce=lambda m: print(f"  {S.accent('›')} {m}")))
     except Exception as e:  # noqa: BLE001
         return False, config.redact(upstream.describe_error(e))
+    config.update(signin={"at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                          "scopes": scopes})
+    return True, f"signed in — {n} tools visible. Token stored owner-only in {auth.token_path()}"
 
 
 def guided_url(st: State, step: str) -> object:
@@ -604,6 +610,7 @@ def cmd_logout(a: argparse.Namespace) -> int:
         print("cancelled.")
         return 1
     cfg.pop("url", None)
+    cfg.pop("signin", None)
     if config.config_path().exists():
         config.save(cfg)
     auth.logout()
