@@ -130,6 +130,18 @@ curl -fsSL https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/mai
 `publish` workflow: npm publish with provenance, a GitHub release, then a wait-and-smoke-test of `npx zoho-skills@X.Y.Z`.
 The one manual step is npm's own approval gate (see below).
 
+### Making npm releases fully automatic (no approval click)
+npm's staged publishing holds `npm publish` from a token until a maintainer approves it with 2FA. A trusted publisher
+(GitHub Actions identity, no token stored anywhere) can be allowed to publish directly. One-time setup, by the package
+owner (needs your npm 2FA; npm >= 11.15, so use `npx`):
+```bash
+npx --yes npm@latest login
+npx --yes npm@latest trust github zoho-skills --repo cr-arunkumar/creole-zoho-skills --file publish.yml --allow-publish
+gh variable set NPM_TRUSTED_PUBLISHING --body true -R cr-arunkumar/creole-zoho-skills
+```
+After that the `publish` workflow uses OIDC instead of `NPM_TOKEN`, and tag → installable needs no manual step
+(plus npm's few minutes of registry lag). To go back to the token path, delete the variable.
+
 ## Develop
 ```bash
 uv venv && uv pip install -e . pytest fastapi httpx

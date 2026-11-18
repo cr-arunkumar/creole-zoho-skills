@@ -9,7 +9,7 @@
 #
 # The tag (without the leading "v") must equal package.json and pyproject.toml "version".
 # If that version is already on npm, the publish step is skipped, so reruns are safe.
-# Requires the NPM_TOKEN repository secret.
+# Requires the NPM_TOKEN repository secret, or npm trusted publishing + repo variable NPM_TRUSTED_PUBLISHING=true.
 name: publish
 
 on:
@@ -73,11 +73,20 @@ jobs:
             echo "${pkg_name}@${pkg_version} not found on npm - will publish."
           fi
 
-      - name: Publish to npm
-        if: steps.npm_check.outputs.exists != 'true'
+      # Token publish (default). npm may hold the result for a maintainer's approval ("staged publishing").
+      - name: Publish to npm (token)
+        if: steps.npm_check.outputs.exists != 'true' && vars.NPM_TRUSTED_PUBLISHING != 'true'
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Trusted publishing (no token, no secret): enabled by `npm trust github ... --allow-publish` plus the repo
+      # variable NPM_TRUSTED_PUBLISHING=true. Needs npm >= 11.5 for the OIDC exchange.
+      - name: Publish to npm (trusted publishing)
+        if: steps.npm_check.outputs.exists != 'true' && vars.NPM_TRUSTED_PUBLISHING == 'true'
+        run: |
+          npm install -g npm@latest
+          npm publish --access public --provenance
 
       - name: GitHub release
         if: github.event_name == 'push'
