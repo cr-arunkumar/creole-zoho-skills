@@ -642,24 +642,54 @@ def _installed_global_harnesses(home: Path) -> list:
     return [h for h, (_, glob) in adapters.SKILL_DIRS.items() if (home / glob / CORE).is_dir()]
 
 
+REPO_SLUG = "cr-arunkumar/creole-zoho-skills"
+
+
+def _vtuple(v: str) -> tuple:
+    """'v0.2.10' -> (0, 2, 10); unparsable parts become 0."""
+    return tuple(int(x) if x.isdigit() else 0 for x in v.lstrip("v").split(".")[:3])
+
+
+def latest_release() -> Optional[str]:
+    """Latest GitHub release tag (e.g. 'v0.2.7'), or None if it can't be read. GitHub, not npm: it is published
+    automatically by CI and needs no approval."""
+    try:
+        import httpx
+        r = httpx.get(f"https://api.github.com/repos/{REPO_SLUG}/releases/latest", timeout=10)
+        tag = r.json().get("tag_name")
+        return tag if isinstance(tag, str) and tag.startswith("v") else None
+    except Exception:  # noqa: BLE001 — offline / rate-limited: caller falls back
+        return None
+
+
 def cmd_update(a: argparse.Namespace) -> int:
-    """Upgrade the tool, refresh org packs and re-copy installed skills so they match the new version."""
+    """Upgrade to the latest GitHub release, refresh org packs and re-copy installed skills."""
     before, home = version(), Path.home()
     if not a.skills_only:
+        latest = latest_release()
+        if a.check:
+            state = ("up to date" if latest and _vtuple(latest) <= _vtuple(before)
+                     else f"update available: {latest}" if latest else "could not read the latest release")
+            print(f"zoho-skills {before} — {state}")
+            return 0
         uv = shutil.which("uv")
-        if uv and subprocess.run([uv, "tool", "list"], capture_output=True, text=True).stdout.count("zoho-skills"):
-            if subprocess.run([uv, "tool", "upgrade", "zoho-skills"]).returncode != 0:
-                print(f"{S.err('✖')} upgrade failed (network?). Try: uv tool install --force "
-                      "git+https://github.com/cr-arunkumar/creole-zoho-skills")
-                return 1
-        else:
-            print("Not installed with uv here. Update with: npx --yes --prefer-online zoho-skills@latest   "
-                  "(or re-run the curl installer from the README)")
+        if not (uv and subprocess.run([uv, "tool", "list"], capture_output=True, text=True).stdout.count("zoho-skills")):
+            print("Not installed with uv here. Update with: curl -fsSL https://raw.githubusercontent.com/"
+                  f"{REPO_SLUG}/main/install.sh | sh   (or: npx --yes --prefer-online zoho-skills@latest)")
             return 1
+        if latest and _vtuple(latest) <= _vtuple(before):
+            print(f"{S.ok('✔')} already on the latest release ({latest})")
+        else:
+            wheel = (f"https://github.com/{REPO_SLUG}/releases/download/{latest}/zoho_skills-{latest[1:]}-py3-none-any.whl"
+                     if latest else None)
+            ok = bool(wheel) and subprocess.run([uv, "tool", "install", "--force", wheel]).returncode == 0
+            if not ok and subprocess.run([uv, "tool", "upgrade", "zoho-skills"]).returncode != 0:
+                print(f"{S.err('✖')} upgrade failed (network?). Try: uv tool install --force git+https://github.com/{REPO_SLUG}")
+                return 1
     # after an upgrade run the freshly installed binary (this process is the old version); else this interpreter
     exe = [shutil.which("zoho-skills")] if not a.skills_only and shutil.which("zoho-skills") else [sys.executable, "-m", "zoho_skills"]
     after = subprocess.run([*exe, "--version"], capture_output=True, text=True).stdout.strip() or f"zoho-skills {before}"
-    print(f"{S.ok('✔')} {after}" + (S.dim(f"  (was {before})") if f"zoho-skills {before}" != after else S.dim("  (already latest)")))
+    print(f"{S.ok('✔')} {after}" + (S.dim(f"  (was {before})") if f"zoho-skills {before}" != after else ""))
     for line in (subprocess.run([*exe, "org", "update"], capture_output=True, text=True).stdout.splitlines() if not a.skills_only else []):
         print(f"  {line}")
     for h in _installed_global_harnesses(home):
@@ -763,6 +793,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--offline", action="store_true", help="skip the read-only upstream check")
     up = sub.add_parser("update", help="upgrade zoho-skills, org packs and installed skills")
     up.add_argument("--skills-only", action="store_true", help="skip the upgrade; just refresh installed skills")
+    up.add_argument("--check", action="store_true", help="only report whether a newer release exists")
     u = sub.add_parser("uninstall", help="remove our MCP entries and installed skills")
     u.add_argument("--harness")
     u.add_argument("--project", metavar="DIR")

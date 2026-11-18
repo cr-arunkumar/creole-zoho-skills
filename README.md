@@ -117,18 +117,21 @@ and `skills/zoho-projects-core/references/org-skill-spec.md`.
 ## Uninstall
 `zoho-skills uninstall [--purge]`, then `uv tool uninstall zoho-skills`. Delete `~/.zoho-skills` to remove config and state.
 
-## Install without waiting for npm
-npm can hold a new release for the maintainer's approval and then needs a few minutes to serve it. These install the
-exact tag straight from GitHub, immediately:
+## Install paths (and which ones need no approval)
+Every release tag builds a wheel in CI and attaches it to the [GitHub release](https://github.com/cr-arunkumar/creole-zoho-skills/releases),
+fully automatic. These paths use it, so they work the moment CI finishes and never wait for npm:
 ```bash
-npx github:cr-arunkumar/creole-zoho-skills#v0.2.5          # or: uvx --from git+https://github.com/cr-arunkumar/creole-zoho-skills@v0.2.5 zoho-skills
-curl -fsSL https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/main/install.sh | ZOHO_SKILLS_REF=v0.2.5 sh
+curl -fsSL https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/main/install.sh | sh     # latest release
+zoho-skills update            # moves to the latest GitHub release;  zoho-skills update --check  only reports
+npx github:cr-arunkumar/creole-zoho-skills#v0.2.6            # pinned tag straight from GitHub
 ```
+The npm package (`npx zoho-skills@latest`) is a mirror: npm may hold each release for a maintainer's approval (below).
 
 ## Release (maintainers)
 `scripts/release.sh X.Y.Z` bumps the three version files, runs the tests, commits, tags and pushes. The tag starts the
-`publish` workflow: npm publish with provenance, a GitHub release, then a wait-and-smoke-test of `npx zoho-skills@X.Y.Z`.
-The one manual step is npm's own approval gate (see below).
+`publish` workflow: tests, build the wheel, **GitHub release with the wheel** (+ install smoke test), npm publish with
+provenance, then a wait-and-smoke-test of `npx zoho-skills@X.Y.Z`. Nothing in that path needs you. Only the npm mirror
+can wait for npm's approval gate (see below); installs from GitHub never do.
 
 ### Making npm releases fully automatic (no approval click)
 npm's staged publishing holds `npm publish` from a token until a maintainer approves it with 2FA. A trusted publisher

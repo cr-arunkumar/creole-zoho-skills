@@ -144,3 +144,17 @@ def test_release_script_is_valid_sh_and_rejects_bad_versions():
     script = str(REPO / "scripts" / "release.sh")
     assert subprocess.run(["sh", "-n", script]).returncode == 0
     assert subprocess.run(["sh", script, "nope"], capture_output=True).returncode != 0
+
+
+def test_version_compare_and_release_tag_parsing():
+    from zoho_skills import cli
+    assert cli._vtuple("v0.2.10") > cli._vtuple("0.2.9") and cli._vtuple("v1.0.0") > cli._vtuple("v0.9.9")
+    assert cli._vtuple("0.2.6") == cli._vtuple("v0.2.6")
+
+
+def test_update_check_reports_without_changing_anything(tmp_path, monkeypatch):
+    from zoho_skills import cli
+    monkeypatch.setattr(cli, "latest_release", lambda: "v99.0.0")
+    monkeypatch.setattr(cli, "version", lambda: "0.2.6")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
+    assert cli.main(["update", "--check"]) == 0

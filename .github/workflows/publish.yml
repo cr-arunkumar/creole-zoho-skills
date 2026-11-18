@@ -60,6 +60,32 @@ jobs:
           fi
           echo "Tag $TAG matches package.json and pyproject.toml version $pkg_version"
 
+      # GitHub is the primary, fully automatic distribution: the wheel is attached to the release and installable
+      # the moment this job gets here (install.sh, `uv tool install`, `zoho-skills update`). npm below is a mirror.
+      - name: Build wheel and sdist
+        run: uv build --out-dir dist
+
+      - name: GitHub release with the wheel
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --title "$GITHUB_REF_NAME"
+          fi
+
+      - name: Smoke-test the GitHub install path
+        if: github.event_name == 'push'
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          export UV_TOOL_DIR="$RUNNER_TEMP/zs-tools" UV_TOOL_BIN_DIR="$RUNNER_TEMP/zs-bin"
+          uv tool install --force "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/zoho_skills-${v}-py3-none-any.whl"
+          out="$("$UV_TOOL_BIN_DIR/zoho-skills" --version)"
+          echo "$out"
+          [ "$out" = "zoho-skills ${v}" ]
+
       - name: Check whether this version is already on npm
         id: npm_check
         run: |
@@ -73,7 +99,8 @@ jobs:
             echo "${pkg_name}@${pkg_version} not found on npm - will publish."
           fi
 
-      # Token publish (default). npm may hold the result for a maintainer's approval ("staged publishing").
+      # npm mirror. Token publish (default): npm may hold it for a maintainer's approval ("staged publishing");
+      # that never blocks installs, which use the GitHub release above.
       - name: Publish to npm (token)
         if: steps.npm_check.outputs.exists != 'true' && vars.NPM_TRUSTED_PUBLISHING != 'true'
         run: npm publish --access public --provenance
@@ -87,12 +114,6 @@ jobs:
         run: |
           npm install -g npm@latest
           npm publish --access public --provenance
-
-      - name: GitHub release
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
 
       # npm may hold the release for a maintainer's approval (staged publishing) and then needs a few minutes to
       # serve the tarball. Wait for it and smoke-test the real `npx` install so this run ends with "installable".

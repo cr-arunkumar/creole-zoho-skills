@@ -2,12 +2,12 @@
 # zoho-skills installer: installs uv (if missing) and the zoho-skills CLI, then starts onboarding.
 #   curl -fsSL https://raw.githubusercontent.com/cr-arunkumar/creole-zoho-skills/main/install.sh | sh
 #   curl -fsSL .../install.sh | sh -s -- install --yes --harness claude --global --mcp-url https://...
-# Env: ZOHO_SKILLS_REF     git ref to install (default main; pin a release tag, e.g. v0.2.0, for production)
+# Env: ZOHO_SKILLS_REF     git ref/tag to install (default: the latest GitHub release; falls back to main)
 #      ZOHO_SKILLS_NO_RUN  set to 1 to install only, without starting the CLI
 set -eu
 
 REPO="cr-arunkumar/creole-zoho-skills"
-REF="${ZOHO_SKILLS_REF:-main}"
+REF="${ZOHO_SKILLS_REF:-}"
 
 say() { printf '  %s\n' "$*"; }
 die() { printf '  error: %s\n' "$*" >&2; exit 1; }
@@ -29,8 +29,23 @@ if ! command -v uv >/dev/null 2>&1; then
   command -v uv >/dev/null 2>&1 || die "uv installed but not found on PATH; open a new shell and re-run"
 fi
 
+if [ -z "$REF" ] && command -v curl >/dev/null 2>&1; then
+  REF="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null |
+    sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1 || true)"
+fi
+REF="${REF:-main}"
+
 printf '\n  zoho-skills: installing (%s@%s)\n' "$REPO" "$REF"
-uv tool install --force "git+https://github.com/$REPO@$REF" || die "install failed (check network / ZOHO_SKILLS_REF)"
+# A release tag ships a wheel (no git needed, no npm approval involved); anything else installs from git.
+case "$REF" in
+  v[0-9]*) WHEEL="https://github.com/$REPO/releases/download/$REF/zoho_skills-${REF#v}-py3-none-any.whl" ;;
+  *) WHEEL="" ;;
+esac
+if [ -n "$WHEEL" ] && uv tool install --force "$WHEEL" >/dev/null 2>&1; then
+  :
+else
+  uv tool install --force "git+https://github.com/$REPO@$REF" || die "install failed (check network / ZOHO_SKILLS_REF)"
+fi
 
 BIN_DIR="$(uv tool dir --bin 2>/dev/null || true)"
 [ -n "$BIN_DIR" ] && PATH="$BIN_DIR:$PATH"
